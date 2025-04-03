@@ -1,4 +1,4 @@
-package net.stardance.core.component;
+package net.stardance.core;
 
 import com.bulletphysics.collision.shapes.BoxShape;
 import com.bulletphysics.collision.shapes.CompoundShape;
@@ -19,8 +19,9 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Handles the optimization of block collision shapes by merging adjacent
  * blocks into larger box shapes, reducing the number of collision objects.
+ * This class is package-private - external code should use LocalGrid instead.
  */
-public class GridBlockMerger {
+class GridBlockMerger {
     // ----------------------------------------------
     // PARENT REFERENCE
     // ----------------------------------------------
@@ -39,7 +40,7 @@ public class GridBlockMerger {
      *
      * @param grid The parent LocalGrid
      */
-    public GridBlockMerger(LocalGrid grid) {
+    GridBlockMerger(LocalGrid grid) {
         this.grid = grid;
     }
 

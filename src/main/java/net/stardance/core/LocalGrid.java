@@ -5,13 +5,8 @@ import com.bulletphysics.linearmath.Transform;
 import net.minecraft.block.BlockState;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
-import net.stardance.core.component.GridBlockMerger;
-import net.stardance.core.component.GridNetworkingComponent;
-import net.stardance.core.component.GridPhysicsComponent;
-import net.stardance.core.component.GridRenderComponent;
+import net.stardance.core.GridPhysicsComponent;
 import net.stardance.physics.PhysicsEngine;
-import net.stardance.physics.SubchunkCoordinates;
-import net.stardance.physics.SubchunkManager;
 import net.stardance.utils.ILoggingControl;
 import net.stardance.utils.SLogger;
 
@@ -26,8 +21,8 @@ import static net.stardance.Stardance.engineManager;
 
 /**
  * Represents a free-floating collection of blocks with physics properties.
- * This is the core class that coordinates the various components that manage
- * physics, networking, and rendering of a grid.
+ * This is the main API entry point for the Stardance physics grid system.
+ * All access to physics grids should be done through this class.
  */
 public class LocalGrid implements ILoggingControl {
     // ----------------------------------------------
@@ -36,7 +31,6 @@ public class LocalGrid implements ILoggingControl {
     private final ServerWorld world;
     private final UUID gridId;
     private final PhysicsEngine engine;
-    private final SubchunkManager subchunkManager;
 
     // Grid position and orientation
     private Vector3d origin;                  // Initial origin point
@@ -60,11 +54,6 @@ public class LocalGrid implements ILoggingControl {
     private final GridNetworkingComponent networkingComponent;
     private final GridRenderComponent renderComponent;
     private final GridBlockMerger blockMerger;
-
-    // ----------------------------------------------
-    // SUBCHUNK MANAGEMENT
-    // ----------------------------------------------
-    private Set<SubchunkCoordinates> activeSubchunks = new HashSet<>();
 
     // ----------------------------------------------
     // LOGGING CONTROL
@@ -96,9 +85,8 @@ public class LocalGrid implements ILoggingControl {
         this.world = world;
         this.gridId = UUID.randomUUID();
 
-        // Get engine and subchunk manager
+        // Get engine
         this.engine = engineManager.getEngine(world);
-        this.subchunkManager = engine.getSubchunkManager();
 
         // Initialize components
         this.blockMerger = new GridBlockMerger(this);
@@ -114,7 +102,7 @@ public class LocalGrid implements ILoggingControl {
     }
 
     // ----------------------------------------------
-    // PUBLIC API
+    // CORE API METHODS
     // ----------------------------------------------
     /**
      * Updates the grid's physics and network state.
@@ -124,19 +112,9 @@ public class LocalGrid implements ILoggingControl {
         if (physicsComponent.getRigidBody() == null) return;
 
         // CRITICAL FIX: Lock the physics operations to prevent concurrent updates
-        synchronized(engineManager.getEngine(world).getPhysicsLock()) {
+        synchronized(engine.getPhysicsLock()) {
             // Update physics component only once per tick
             physicsComponent.updateTransforms();
-
-            // Log the physics state - just once per tick
-            Vector3f prevPos = new Vector3f();
-            Vector3f currPos = new Vector3f();
-            physicsComponent.getPreviousTransform(new Transform()).origin.get(prevPos);
-            physicsComponent.getCurrentTransform(new Transform()).origin.get(currPos);
-            SLogger.log(this, "Physics updated - prev: " + prevPos + ", current: " + currPos);
-
-            // Store the current server tick to prevent double updates
-            long currentServerTick = world.getTime();
 
             // Apply physics effects
             physicsComponent.applyVelocityDamping();
@@ -154,7 +132,7 @@ public class LocalGrid implements ILoggingControl {
             net.stardance.network.GridNetwork.sendGridState(this);
 
             // Update which subchunks this grid overlaps
-            updateActiveSubchunks();
+            physicsComponent.updateActiveSubchunks();
 
             // Handle block updates
             if (blocksDirty) {
@@ -225,6 +203,17 @@ public class LocalGrid implements ILoggingControl {
     }
 
     /**
+     * Imports multiple blocks at once.
+     *
+     * @param blockMap Map of positions to blocks to import
+     */
+    public void importBlocks(ConcurrentMap<BlockPos, LocalBlock> blockMap) {
+        for (Map.Entry<BlockPos, LocalBlock> entry : blockMap.entrySet()) {
+            addBlock(entry.getValue());
+        }
+    }
+
+    /**
      * Converts a point from world space to grid-local space.
      *
      * @param worldPoint Point in world coordinates
@@ -235,13 +224,28 @@ public class LocalGrid implements ILoggingControl {
     }
 
     /**
-     * Imports multiple blocks at once.
+     * Applies an impulse to the grid's center of mass.
      *
-     * @param blockMap Map of positions to blocks to import
+     * @param impulse Impulse vector to apply
      */
-    public void importBlocks(ConcurrentMap<BlockPos, LocalBlock> blockMap) {
-        for (Map.Entry<BlockPos, LocalBlock> entry : blockMap.entrySet()) {
-            addBlock(entry.getValue());
+    public void applyImpulse(Vector3f impulse) {
+        RigidBody body = getRigidBody();
+        if (body != null) {
+            body.applyCentralImpulse(impulse);
+            body.activate(true);
+        }
+    }
+
+    /**
+     * Applies torque to the grid.
+     *
+     * @param torque Torque vector to apply
+     */
+    public void applyTorque(Vector3f torque) {
+        RigidBody body = getRigidBody();
+        if (body != null) {
+            body.applyTorque(torque);
+            body.activate(true);
         }
     }
 
@@ -256,26 +260,40 @@ public class LocalGrid implements ILoggingControl {
     }
 
     /**
-     * Updates which subchunks this grid overlaps.
+     * Gets the velocity at a specific point in the grid (in world space).
+     *
+     * @param worldPoint Point to check velocity at (in world coordinates)
+     * @return Velocity vector at that point
      */
-    private void updateActiveSubchunks() {
-        Set<SubchunkCoordinates> newSubchunks = physicsComponent.calculateOccupiedSubchunks();
-
-        // Activate new subchunks
-        for (SubchunkCoordinates coords : newSubchunks) {
-            if (!activeSubchunks.contains(coords)) {
-                subchunkManager.activateSubchunk(coords);
-            }
+    public Vector3f getVelocityAtPoint(Vector3f worldPoint) {
+        RigidBody body = getRigidBody();
+        if (body == null) {
+            return new Vector3f(0, 0, 0);
         }
 
-        // Deactivate old subchunks
-        for (SubchunkCoordinates coords : activeSubchunks) {
-            if (!newSubchunks.contains(coords)) {
-                subchunkManager.deactivateSubchunk(coords);
-            }
-        }
+        // Get grid's current velocity
+        Vector3f linearVel = new Vector3f();
+        Vector3f angularVel = new Vector3f();
+        body.getLinearVelocity(linearVel);
+        body.getAngularVelocity(angularVel);
 
-        activeSubchunks = newSubchunks;
+        // Get grid center
+        Vector3f gridCenter = new Vector3f();
+        Transform gridTransform = new Transform();
+        body.getWorldTransform(gridTransform);
+        gridTransform.origin.get(gridCenter);
+
+        // Calculate relative position
+        Vector3f relativePos = new Vector3f();
+        relativePos.sub(worldPoint, gridCenter);
+
+        // Calculate velocity at point (v = linear + angular × r)
+        Vector3f velocityAtPoint = new Vector3f(linearVel);
+        Vector3f angularComponent = new Vector3f();
+        angularComponent.cross(angularVel, relativePos);
+        velocityAtPoint.add(angularComponent);
+
+        return velocityAtPoint;
     }
 
     // ----------------------------------------------
@@ -345,41 +363,6 @@ public class LocalGrid implements ILoggingControl {
     }
 
     /**
-     * Gets the physics component.
-     */
-    public GridPhysicsComponent getPhysicsComponent() {
-        return physicsComponent;
-    }
-
-    /**
-     * Gets the rendering component.
-     */
-    public GridRenderComponent getRenderComponent() {
-        return renderComponent;
-    }
-
-    /**
-     * Gets the networking component.
-     */
-    public GridNetworkingComponent getNetworkingComponent() {
-        return networkingComponent;
-    }
-
-    /**
-     * Gets the server world this grid belongs to.
-     */
-    public ServerWorld getWorld() {
-        return world;
-    }
-
-    /**
-     * Gets the physics engine this grid is managed by.
-     */
-    public PhysicsEngine getEngine() {
-        return engine;
-    }
-
-    /**
      * Gets the center of mass.
      */
     public Vector3f getCentroid() {
@@ -401,9 +384,54 @@ public class LocalGrid implements ILoggingControl {
     }
 
     /**
+     * Gets the server world this grid belongs to.
+     */
+    public ServerWorld getWorld() {
+        return world;
+    }
+
+    /**
+     * Gets the physics engine this grid is managed by.
+     */
+    public PhysicsEngine getEngine() {
+        return engine;
+    }
+
+    /**
      * Gets the origin as a Vector3f.
      */
     public Vector3f originFloat() {
         return new Vector3f((float) origin.x, (float) origin.y, (float) origin.z);
+    }
+
+    // ----------------------------------------------
+    // PACKAGE-PRIVATE METHODS FOR COMPONENTS
+    // ----------------------------------------------
+    /**
+     * For internal use by components. Gets the physics component.
+     */
+    GridPhysicsComponent getPhysicsComponent() {
+        return physicsComponent;
+    }
+
+    /**
+     * For internal use by components. Gets the rendering component.
+     */
+    GridRenderComponent getRenderComponent() {
+        return renderComponent;
+    }
+
+    /**
+     * For internal use by components. Gets the networking component.
+     */
+    GridNetworkingComponent getNetworkingComponent() {
+        return networkingComponent;
+    }
+
+    /**
+     * For internal use by components. Gets the block merger component.
+     */
+    GridBlockMerger getBlockMerger() {
+        return blockMerger;
     }
 }

@@ -1,4 +1,4 @@
-package net.stardance.core.component;
+package net.stardance.core;
 
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.linearmath.Transform;
@@ -11,8 +11,9 @@ import javax.vecmath.Vector3f;
 /**
  * Manages rendering state for a LocalGrid.
  * Handles position and rotation history for smooth rendering interpolation.
+ * This class is package-private - external code should use LocalGrid instead.
  */
-public class GridRenderComponent {
+class GridRenderComponent {
     // ----------------------------------------------
     // RENDER STATE
     // ----------------------------------------------
@@ -31,7 +32,7 @@ public class GridRenderComponent {
     /**
      * Creates a new GridRenderComponent.
      */
-    public GridRenderComponent(LocalGrid grid) {
+    GridRenderComponent(LocalGrid grid) {
         this.grid = grid;
 
         // Initialize with identity rotation

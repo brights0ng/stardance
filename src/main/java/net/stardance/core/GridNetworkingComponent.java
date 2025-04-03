@@ -1,4 +1,4 @@
-package net.stardance.core.component;
+package net.stardance.core;
 
 import com.bulletphysics.linearmath.Transform;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
@@ -25,14 +25,15 @@ import static net.stardance.Stardance.serverInstance;
 /**
  * Handles network communication for a LocalGrid.
  * Manages transform updates and block synchronization across the network.
+ * This class is package-private - external code should use LocalGrid instead.
  */
-public class GridNetworkingComponent {
+class GridNetworkingComponent {
     // ----------------------------------------------
     // CONSTANTS
     // ----------------------------------------------
     private static final float POSITION_CHANGE_THRESHOLD = 0.001f;
     private static final AtomicInteger packetCounter = new AtomicInteger(0);
-    private static final boolean verbose = true; // Enable for detailed logging
+    private static final boolean verbose = false; // Enable for detailed logging
 
     // ----------------------------------------------
     // PARENT REFERENCE
@@ -63,7 +64,7 @@ public class GridNetworkingComponent {
      *
      * @param grid The parent LocalGrid
      */
-    public GridNetworkingComponent(LocalGrid grid) {
+    GridNetworkingComponent(LocalGrid grid) {
         this.grid = grid;
     }
 
@@ -110,7 +111,7 @@ public class GridNetworkingComponent {
     private void sendTransformUpdate(boolean sendBlocks) {
         // Get current transform
         Transform currentTransform = new Transform();
-        grid.getPhysicsComponent().getCurrentTransform(currentTransform);
+        grid.getCurrentTransform(currentTransform);
 
         // Get current position and rotation
         Vector3f currentPosition = new Vector3f();
@@ -261,12 +262,14 @@ public class GridNetworkingComponent {
             int packetNum = packetCounter.incrementAndGet();
             boolean sent = broadcastPacket(PHYSICS_STATE_UPDATE_PACKET_ID, buf);
 
-            SLogger.log(grid, "Physics packet #" + packetNum + (sent ? " sent" : " FAILED") +
-                    " for grid " + grid.getGridId() +
-                    ", tick=" + currentTickTime +
-                    ", pos=" + currentPosition +
-                    ", update #" + physicsUpdatesCount +
-                    (forceUpdate ? " (forced)" : ""));
+            if (verbose) {
+                SLogger.log(grid, "Physics packet #" + packetNum + (sent ? " sent" : " FAILED") +
+                        " for grid " + grid.getGridId() +
+                        ", tick=" + currentTickTime +
+                        ", pos=" + currentPosition +
+                        ", update #" + physicsUpdatesCount +
+                        (forceUpdate ? " (forced)" : ""));
+            }
         }
     }
 

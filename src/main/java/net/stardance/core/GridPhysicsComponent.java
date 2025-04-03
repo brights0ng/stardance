@@ -1,4 +1,4 @@
-package net.stardance.core.component;
+package net.stardance.core;
 
 import com.bulletphysics.collision.dispatch.CollisionFlags;
 import com.bulletphysics.collision.shapes.BoxShape;
@@ -13,8 +13,6 @@ import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.shape.VoxelShape;
-import net.stardance.core.LocalBlock;
-import net.stardance.core.LocalGrid;
 import net.stardance.physics.SubchunkCoordinates;
 import net.stardance.utils.SLogger;
 import org.joml.Vector3i;
@@ -28,10 +26,9 @@ import java.util.concurrent.ConcurrentMap;
 
 /**
  * Handles physics-related functionality for a LocalGrid.
- * Manages collision shapes, rigid bodies, transforms, and physics calculations.
- * Supports both optimized merged boxes and accurate VoxelShape-based collision.
+ * This class is package-private - external code should use LocalGrid instead.
  */
-public class GridPhysicsComponent {
+class GridPhysicsComponent {
     // ----------------------------------------------
     // CONSTANTS
     // ----------------------------------------------
@@ -79,6 +76,7 @@ public class GridPhysicsComponent {
     private boolean isFirstBuild = true;           // First time build flag
     private boolean rebuildInProgress = false;     // Rebuild operation in progress
     private boolean isAsleep = false;              // Whether the rigid body is currently sleeping
+    private Set<SubchunkCoordinates> activeSubchunks = new HashSet<>(); // Currently active subchunks
 
     // ----------------------------------------------
     // CONSTRUCTOR
@@ -90,7 +88,7 @@ public class GridPhysicsComponent {
      * @param origin Initial origin position
      * @param rotation Initial rotation
      */
-    public GridPhysicsComponent(LocalGrid grid, Vector3d origin, Quat4f rotation) {
+    GridPhysicsComponent(LocalGrid grid, Vector3d origin, Quat4f rotation) {
         this.grid = grid;
 
         // Create the rigid body with empty collision shape
@@ -170,6 +168,29 @@ public class GridPhysicsComponent {
             rigidBody.setLinearVelocity(linearVel);
             rigidBody.setAngularVelocity(angularVel);
         }
+    }
+
+    /**
+     * Updates which subchunks this grid overlaps.
+     */
+    public void updateActiveSubchunks() {
+        Set<SubchunkCoordinates> newSubchunks = calculateOccupiedSubchunks();
+
+        // Activate new subchunks
+        for (SubchunkCoordinates coords : newSubchunks) {
+            if (!activeSubchunks.contains(coords)) {
+                grid.getEngine().getSubchunkManager().activateSubchunk(coords);
+            }
+        }
+
+        // Deactivate old subchunks
+        for (SubchunkCoordinates coords : activeSubchunks) {
+            if (!newSubchunks.contains(coords)) {
+                grid.getEngine().getSubchunkManager().deactivateSubchunk(coords);
+            }
+        }
+
+        activeSubchunks = newSubchunks;
     }
 
     /**
@@ -355,8 +376,6 @@ public class GridPhysicsComponent {
 
     /**
      * Rebuilds the collision shape and rigid body with current block configuration.
-     * Uses a hybrid approach of optimized merged boxes for simple blocks and
-     * accurate VoxelShape collision for complex blocks.
      */
     private void rebuildCollisionShapeAndRigidBody(ConcurrentMap<BlockPos, LocalBlock> blocks, GridBlockMerger blockMerger) {
         // Store current transform for preservation
@@ -680,6 +699,13 @@ public class GridPhysicsComponent {
      */
     public boolean isRebuildInProgress() {
         return rebuildInProgress;
+    }
+
+    /**
+     * Gets the active subchunks.
+     */
+    public Set<SubchunkCoordinates> getActiveSubchunks() {
+        return activeSubchunks;
     }
 
     // ----------------------------------------------

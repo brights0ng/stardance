@@ -18,7 +18,7 @@ Physics objects are structured in "LocalGrids", made of vanilla (or modded) Mine
     - Inconsistent grid block placement 
     - Players can place blocks on grids regardless of distance from grid
 - ENTITY COLLISION:
-    - Entities sometimes get frozen within a 
+    - Redo the entity collision system from the ground up
     - Entities tracked will never be untracked even when leaving active subchunks
     - MAJOR: Crash occurs; BoxShape tries to cast to CompoundShape
     - Entity collision bugs out when colliding with multiple collision shapes
@@ -28,15 +28,15 @@ Physics objects are structured in "LocalGrids", made of vanilla (or modded) Mine
     - Physics objects will trip over mesh triangle edges when moving parallel to them, causing visual oddity
 ### Planned features:
 - INTERACTION:
-  - Block breaking
-  - Interaction with block entities
+    - Block breaking
+    - Interaction with block entities
 - PHYSICS:
-  - Different blocks having different mass.
-  - Implement custom collision resolution system?
-  - Buoyancy
-  - Accurate subchunk mesh generation
-  - Simpler grid block CompoundShape generation
+    - Different blocks having different mass.
+    - Implement custom collision resolution system?
+    - Buoyancy
+    - Accurate subchunk mesh generation
+    - Simpler grid block CompoundShape generation
 - ENTITY COLLISION:
-  - Grid passengers
+    - Grid passengers
 - RENDER:
-  - Custom shader rendering? Or try to implement vanilla rendering on blocks based on location? (Look at VS2 for inspiration)
+    - Custom shader rendering? Or try to implement vanilla rendering on blocks based on location? (Look at VS2 for inspiration)
