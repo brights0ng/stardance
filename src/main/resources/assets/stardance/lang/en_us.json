@@ -1,0 +1,23 @@
+{
+  "itemGroup.stardance.stardance_utils": "Stardance Utils",
+
+  "item.stardance.grid_creator": "Grid Creator",
+  "item.stardance.grid_creator.tooltip": "Right-click on a block to create a physics grid",
+  "item.stardance.grid_creator.description": "Creates a physical grid that can be manipulated with physics forces",
+
+  "item.stardance.impulse_wand": "Impulse Wand",
+  "item.stardance.impulse_wand.tooltip": "Right-click to pull grids toward the pointed location",
+  "item.stardance.impulse_wand.description": "Apply impulse forces to physical grids",
+
+  "message.stardance.grid_created": "Grid created!",
+  "message.stardance.no_grid_found": "No physics grids found nearby.",
+  "message.stardance.impulse_applied": "Applied impulse to grid!",
+  "message.stardance.no_block_in_range": "No block in range. Point at a block and try again.",
+
+  "key.stardance.toggle_debug": "Toggle Physics Debug",
+  "key.stardance.toggle_debug_rendering": "Toggle Debug Rendering",
+  "category.stardance": "Stardance",
+
+  "command.stardance.debug.enabled": "Debug mode enabled",
+  "command.stardance.debug.disabled": "Debug mode disabled"
+}

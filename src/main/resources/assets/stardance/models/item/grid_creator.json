@@ -1,11 +1,11 @@
 {
     "parent": "item/handheld",
     "textures": {
-     "layer0": "item/grid_creator"
+     "layer0": "stardance:item/grid_creator"
     },
    
     "overrides": [
-     { "predicate": {"custom_model_data": 0}, "model": "custom/gridspawner"}
+     { "predicate": {"custom_model_data": 0}, "model": "stardance:custom/gridcreator"}
      
     
      

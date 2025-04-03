@@ -2,7 +2,7 @@
 	"credit": "Made with Blockbench",
 	"texture_size": [32, 32],
 	"textures": {
-		"1": "blockbench/schematicimporter"
+		"1": "stardance:blockbench/schematicimporter"
 	},
 	"elements": [
 		{

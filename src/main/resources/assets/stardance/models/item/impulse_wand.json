@@ -1,0 +1,16 @@
+{
+    "parent": "item/handheld",
+    "textures": {
+     "layer0": "stardance:item/grid_extender"
+    },
+   
+    "overrides": [
+     { "predicate": {"custom_model_data": 0}, "model": "stardance:custom/gridextender"}
+     
+    
+     
+     
+    ]
+   
+    
+   }
