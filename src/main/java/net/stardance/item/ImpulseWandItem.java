@@ -33,7 +33,7 @@ import static net.stardance.Stardance.engineManager;
  * Right-click to pull the nearest grid toward the clicked point.
  */
 public class ImpulseWandItem extends Item implements ILoggingControl {
-    private static final float DEFAULT_IMPULSE_STRENGTH = 200.0f;
+    private static final float DEFAULT_IMPULSE_STRENGTH = 3000.0f;
     private static final float MAX_IMPULSE_DISTANCE = 20.0f;
 
     public ImpulseWandItem(Settings settings) {

@@ -1,6 +1,7 @@
 package net.stardance.core.component;
 
 import com.bulletphysics.collision.dispatch.CollisionFlags;
+import com.bulletphysics.collision.dispatch.CollisionObject;
 import com.bulletphysics.collision.shapes.BoxShape;
 import com.bulletphysics.collision.shapes.CompoundShape;
 import com.bulletphysics.dynamics.RigidBody;
@@ -52,6 +53,7 @@ public class GridPhysicsComponent {
     private Vector3f centroid = new Vector3f();    // Center of mass
     private float totalMass = 0.0f;                // Total mass of all blocks
     private Vector3f absoluteWorldPosition = new Vector3f(0, 0, 0);   // Position without centroid offset
+    private Vector3f dummy = new Vector3f();
 
     // ----------------------------------------------
     // BOUNDING BOX
@@ -125,12 +127,13 @@ public class GridPhysicsComponent {
         rigidBody.getLinearVelocity(linearVel);
 
         // Stop completely if barely moving
-        if (linearVel.length() < 0.1f) {
+        if (linearVel.length() < 0.01f) {
             rigidBody.setLinearVelocity(new Vector3f(0, 0, 0));
-        } else {
-            // Apply slight damping
-            linearVel.scale(0.98f);
-            rigidBody.setLinearVelocity(linearVel);
+        }
+
+        if (rigidBody.getLinearVelocity(dummy).length() < 0.05f &&
+                rigidBody.getAngularVelocity(dummy).length() < 0.05f) {
+            rigidBody.setActivationState(CollisionObject.ISLAND_SLEEPING);
         }
     }
 
@@ -291,6 +294,7 @@ public class GridPhysicsComponent {
         // Set up collision flags
         rigidBody.setCollisionFlags(rigidBody.getCollisionFlags() | CollisionFlags.CUSTOM_MATERIAL_CALLBACK);
         rigidBody.setUserPointer(grid);
+//        rigidBody.setDamping(0.8f,0.8f);
 
         // Initialize transform history
         currentTransform.set(initialTransform);
@@ -382,7 +386,10 @@ public class GridPhysicsComponent {
 
         // Calculate inertia
         Vector3f inertia = new Vector3f(0, 0, 0);
-        collisionShape.calculateLocalInertia(this.totalMass, inertia);
+        collisionShape.calculateLocalInertia(this.totalMass*10, inertia);
+
+        float inertiaScale = 5.0f;
+        inertia.scale(inertiaScale);
 
         // Set up rigid body transform
         Transform desiredTransform = new Transform();
@@ -411,7 +418,7 @@ public class GridPhysicsComponent {
 
         // Create rigid body
         RigidBodyConstructionInfo rbInfo = new RigidBodyConstructionInfo(
-                this.totalMass, gridMotionState, collisionShape, inertia);
+                this.totalMass*10, gridMotionState, collisionShape, inertia);
 
         // Create or recreate rigid body
         this.rigidBody = new RigidBody(rbInfo);
@@ -425,6 +432,8 @@ public class GridPhysicsComponent {
         // Set up collision flags
         rigidBody.setCollisionFlags(rigidBody.getCollisionFlags() | CollisionFlags.CUSTOM_MATERIAL_CALLBACK);
         rigidBody.setUserPointer(grid);
+//        rigidBody.setDamping(0.8f,0.8f);
+
 
         // Initialize transform history
         currentTransform.set(desiredTransform);
