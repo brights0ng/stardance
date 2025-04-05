@@ -5,9 +5,9 @@
   "item.stardance.grid_creator.tooltip": "Right-click on a block to create a physics grid",
   "item.stardance.grid_creator.description": "Creates a physical grid that can be manipulated with physics forces",
 
-  "item.stardance.impulse_wand": "Impulse Wand",
-  "item.stardance.impulse_wand.tooltip": "Right-click to pull grids toward the pointed location",
-  "item.stardance.impulse_wand.description": "Apply impulse forces to physical grids",
+  "item.stardance.impulse_tool": "Impulse Tool",
+  "item.stardance.impulse_tool.tooltip": "Right-click to pull grids toward the pointed location",
+  "item.stardance.impulse_tool.description": "Apply impulse forces to physical grids",
 
   "message.stardance.grid_created": "Grid created!",
   "message.stardance.no_grid_found": "No physics grids found nearby.",

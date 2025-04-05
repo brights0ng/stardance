@@ -1,0 +1,16 @@
+{
+    "parent": "item/handheld",
+    "textures": {
+     "layer0": "stardance:item/impulse_tool"
+    },
+   
+    "overrides": [
+     { "predicate": {"custom_model_data": 0}, "model": "stardance:custom/impulse_tool"}
+     
+    
+     
+     
+    ]
+   
+    
+   }

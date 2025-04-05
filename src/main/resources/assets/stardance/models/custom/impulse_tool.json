@@ -1,8 +1,8 @@
 {
-	"credit": "Made with Blockbench",
+	"credit": "by MasterZach1000",
 	"texture_size": [32, 32],
 	"textures": {
-		"2": "stardance:textures/blockbench/gridextender"
+		"2": "stardance:item/impulse_tool"
 	},
 	"elements": [
 		{

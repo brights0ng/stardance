@@ -32,11 +32,11 @@ import static net.stardance.Stardance.engineManager;
  * A wand item that applies impulse forces to grids.
  * Right-click to pull the nearest grid toward the clicked point.
  */
-public class ImpulseWandItem extends Item implements ILoggingControl {
-    private static final float DEFAULT_IMPULSE_STRENGTH = 3000.0f;
-    private static final float MAX_IMPULSE_DISTANCE = 20.0f;
+public class ImpulseToolItem extends Item implements ILoggingControl {
+    private static final float DEFAULT_IMPULSE_STRENGTH = 1000.0f;
+    private static final float MAX_IMPULSE_DISTANCE = 64.0f;
 
-    public ImpulseWandItem(Settings settings) {
+    public ImpulseToolItem(Settings settings) {
         super(settings);
     }
 

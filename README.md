@@ -15,7 +15,7 @@ Physics objects are structured in "LocalGrids", made of vanilla (or modded) Mine
     - Players can place world blocks that would intersect with a grid
     - Players can place blocks on grids even if sight is blocked by a world block
     - Players can place grid blocks that would intersect with the world
-    - Inconsistent grid block placement 
+    - Interaction breaks down with multiple grids
     - Players can place blocks on grids regardless of distance from grid
 - ENTITY COLLISION:
     - Redo the entity collision system from the ground up
