@@ -2,6 +2,7 @@ package net.stardance.physics.entity;
 
 import com.bulletphysics.collision.broadphase.BroadphaseInterface;
 import com.bulletphysics.collision.broadphase.BroadphaseNativeType;
+import com.bulletphysics.collision.broadphase.CollisionAlgorithm;
 import com.bulletphysics.collision.broadphase.DbvtBroadphase;
 import com.bulletphysics.collision.dispatch.*;
 import com.bulletphysics.collision.dispatch.CollisionWorld.ClosestConvexResultCallback;
@@ -15,6 +16,7 @@ import com.bulletphysics.dynamics.DynamicsWorld;
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.linearmath.Transform;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.stardance.core.LocalGrid;
@@ -38,6 +40,9 @@ public class ContactDetector implements ILoggingControl {
     private static final float MIN_PENETRATION_FOR_CONTACT = 0.005f; // Minimum penetration to consider a valid contact
     private static final float GROUND_NORMAL_Y_THRESHOLD = 0.7071f; // cos(45 degrees)
 
+    // Debugging flag - set to true to enable verbose collision detection logging
+    private static final boolean DEBUG_COLLISIONS = true;
+
     // Parent references
     private final EntityPhysicsManager entityPhysicsManager;
     private final PhysicsEngine physicsEngine;
@@ -48,6 +53,10 @@ public class ContactDetector implements ILoggingControl {
     // Dedicated collision world for ghost object tests
     private final CollisionWorld ghostCollisionWorld;
     private final BroadphaseInterface ghostBroadphase;
+
+    // Internal counters for stats and debugging
+    private int sweepTestCount = 0;
+    private int hitDetectionCount = 0;
 
     /**
      * Creates a new ContactDetector.
@@ -72,8 +81,7 @@ public class ContactDetector implements ILoggingControl {
     }
 
     /**
-     * Performs a sweep test to detect collisions along a movement path.
-     * Uses Bullet's convex sweep test for accurate collision detection.
+     * Performs a basic sweep test to detect collisions along a movement path.
      *
      * @param entity The entity to check
      * @param movement The proposed movement vector
@@ -84,6 +92,8 @@ public class ContactDetector implements ILoggingControl {
         if (movement.lengthSquared() < 1e-6) {
             return null;
         }
+
+        sweepTestCount++;
 
         synchronized (physicsEngine.getPhysicsLock()) {
             // Get the entity's collision object
@@ -118,17 +128,32 @@ public class ContactDetector implements ILoggingControl {
 
                 // Check if we hit something
                 if (callback.hasHit()) {
-                    // Get hit info - accessing fields directly from ClosestConvexResultCallback
+                    hitDetectionCount++;
+
+                    // Get hit info
                     CollisionObject hitObject = callback.hitCollisionObject;
 
                     // Create a sweep result
-                    return createSweepResult(
+                    SweepResult result = createSweepResult(
                             callback.closestHitFraction,
                             callback.hitNormalWorld,
                             callback.hitPointWorld,
                             hitObject,
                             entity
                     );
+
+                    // Log sweep test hit for debugging
+                    if (DEBUG_COLLISIONS && entity instanceof PlayerEntity) {
+                        SLogger.log(this, String.format(
+                                "Sweep test hit: entity=%s, hitFraction=%.4f, normal=(%.2f, %.2f, %.2f)",
+                                entity.getEntityName(),
+                                callback.closestHitFraction,
+                                callback.hitNormalWorld.x,
+                                callback.hitNormalWorld.y,
+                                callback.hitNormalWorld.z));
+                    }
+
+                    return result;
                 }
             }
         }
@@ -138,13 +163,176 @@ public class ContactDetector implements ILoggingControl {
     }
 
     /**
-     * Performs a more comprehensive convex sweep test that can handle
-     * multiple collision objects and provides more detailed information.
-     *
-     * @param entity The entity to check
-     * @param movement The proposed movement vector
-     * @param entityProxies Map of entity proxies for additional checks
-     * @return A SweepResult if a collision is detected, null otherwise
+     * Checks if two collision objects are currently colliding.
+     * This uses jBullet's collision detection to properly handle all shape types.
+     */
+    private boolean checkCollision(CollisionObject objA, CollisionObject objB) {
+        // Get the collision dispatcher
+        CollisionDispatcher dispatcher = (CollisionDispatcher) physicsEngine.getDynamicsWorld().getDispatcher();
+
+        // Get the collision algorithm (with just 2 parameters as per jBullet's API)
+        CollisionAlgorithm algorithm = dispatcher.findAlgorithm(objA, objB);
+
+        if (algorithm == null) {
+            return false;
+        }
+
+        // Instead of using processCollision directly, check existing manifolds
+        // This is safer since the API might differ between jBullet versions
+        DynamicsWorld dynamicsWorld = physicsEngine.getDynamicsWorld();
+
+        for (int i = 0; i < dispatcher.getNumManifolds(); i++) {
+            PersistentManifold manifold = dispatcher.getManifoldByIndexInternal(i);
+
+            // Check if this manifold involves our objects
+            boolean objectsMatch = (
+                    (manifold.getBody0() == objA && manifold.getBody1() == objB) ||
+                            (manifold.getBody0() == objB && manifold.getBody1() == objA)
+            );
+
+            if (objectsMatch && manifold.getNumContacts() > 0) {
+                // Clean up
+                dispatcher.freeCollisionAlgorithm(algorithm);
+                return true;
+            }
+        }
+
+        // If no existing manifold, fall back to AABB overlap
+        Vector3f aabbMinA = new Vector3f();
+        Vector3f aabbMaxA = new Vector3f();
+        Vector3f aabbMinB = new Vector3f();
+        Vector3f aabbMaxB = new Vector3f();
+
+        Transform transA = new Transform();
+        Transform transB = new Transform();
+        objA.getWorldTransform(transA);
+        objB.getWorldTransform(transB);
+
+        objA.getCollisionShape().getAabb(transA, aabbMinA, aabbMaxA);
+        objB.getCollisionShape().getAabb(transB, aabbMinB, aabbMaxB);
+
+        // Clean up
+        dispatcher.freeCollisionAlgorithm(algorithm);
+
+        // Check for AABB overlap with a small margin
+        float margin = 0.01f;
+        return (
+                aabbMinA.x - margin <= aabbMaxB.x && aabbMaxA.x + margin >= aabbMinB.x &&
+                        aabbMinA.y - margin <= aabbMaxB.y && aabbMaxA.y + margin >= aabbMinB.y &&
+                        aabbMinA.z - margin <= aabbMaxB.z && aabbMaxA.z + margin >= aabbMinB.z
+        );
+    }
+
+    /**
+     * Estimates the collision normal between two collision objects.
+     * This uses shape information to determine the most likely contact normal.
+     */
+    private Vector3f estimateCollisionNormal(CollisionObject objA, CollisionObject objB) {
+        // Get transforms for both objects
+        Transform transA = new Transform();
+        Transform transB = new Transform();
+        objA.getWorldTransform(transA);
+        objB.getWorldTransform(transB);
+
+        // Get centers of both objects
+        Vector3f centerA = new Vector3f(transA.origin);
+        Vector3f centerB = new Vector3f(transB.origin);
+
+        // Calculate direction from B to A
+        Vector3f direction = new Vector3f();
+        direction.sub(centerA, centerB);
+
+        // If centers are too close, we need to use shape information
+        if (direction.lengthSquared() < 1e-4f) {
+            // Get AABBs for both objects
+            Vector3f aabbMinA = new Vector3f();
+            Vector3f aabbMaxA = new Vector3f();
+            Vector3f aabbMinB = new Vector3f();
+            Vector3f aabbMaxB = new Vector3f();
+
+            objA.getCollisionShape().getAabb(transA, aabbMinA, aabbMaxA);
+            objB.getCollisionShape().getAabb(transB, aabbMinB, aabbMaxB);
+
+            // Find the closest face based on penetration depths
+            float penetrationX = Math.min(
+                    aabbMaxA.x - aabbMinB.x,
+                    aabbMaxB.x - aabbMinA.x
+            );
+
+            float penetrationY = Math.min(
+                    aabbMaxA.y - aabbMinB.y,
+                    aabbMaxB.y - aabbMinA.y
+            );
+
+            float penetrationZ = Math.min(
+                    aabbMaxA.z - aabbMinB.z,
+                    aabbMaxB.z - aabbMinA.z
+            );
+
+            // Use direction with minimum penetration
+            if (penetrationX <= penetrationY && penetrationX <= penetrationZ) {
+                // Determine X direction based on positions
+                float centerDiffX = centerA.x - centerB.x;
+                direction.set(centerDiffX > 0 ? 1 : -1, 0, 0);
+            } else if (penetrationY <= penetrationX && penetrationY <= penetrationZ) {
+                // Determine Y direction based on positions
+                float centerDiffY = centerA.y - centerB.y;
+                direction.set(0, centerDiffY > 0 ? 1 : -1, 0);
+            } else {
+                // Determine Z direction based on positions
+                float centerDiffZ = centerA.z - centerB.z;
+                direction.set(0, 0, centerDiffZ > 0 ? 1 : -1);
+            }
+        } else {
+            // Normalize the direction vector
+            direction.normalize();
+        }
+
+        return direction;
+    }
+
+    /**
+     * Estimates a contact point between two collision objects.
+     * This uses shape information to determine the most likely contact point.
+     */
+    private Vector3f estimateContactPoint(CollisionObject objA, CollisionObject objB) {
+        // Get transforms for both objects
+        Transform transA = new Transform();
+        Transform transB = new Transform();
+        objA.getWorldTransform(transA);
+        objB.getWorldTransform(transB);
+
+        // Get AABBs for both objects
+        Vector3f aabbMinA = new Vector3f();
+        Vector3f aabbMaxA = new Vector3f();
+        Vector3f aabbMinB = new Vector3f();
+        Vector3f aabbMaxB = new Vector3f();
+
+        objA.getCollisionShape().getAabb(transA, aabbMinA, aabbMaxA);
+        objB.getCollisionShape().getAabb(transB, aabbMinB, aabbMaxB);
+
+        // Calculate the intersection of the AABBs
+        Vector3f intersectionMin = new Vector3f();
+        Vector3f intersectionMax = new Vector3f();
+
+        intersectionMin.x = Math.max(aabbMinA.x, aabbMinB.x);
+        intersectionMin.y = Math.max(aabbMinA.y, aabbMinB.y);
+        intersectionMin.z = Math.max(aabbMinA.z, aabbMinB.z);
+
+        intersectionMax.x = Math.min(aabbMaxA.x, aabbMaxB.x);
+        intersectionMax.y = Math.min(aabbMaxA.y, aabbMaxB.y);
+        intersectionMax.z = Math.min(aabbMaxA.z, aabbMaxB.z);
+
+        // Use the center of the intersection as the contact point
+        Vector3f contactPoint = new Vector3f();
+        contactPoint.add(intersectionMin, intersectionMax);
+        contactPoint.scale(0.5f);
+
+        return contactPoint;
+    }
+
+    /**
+     * Fixed implementation of convexSweepTest that works with jBullet's API.
      */
     public SweepResult convexSweepTest(Entity entity, Vec3d movement, Map<Entity, EntityProxy> entityProxies) {
         // Skip if movement is too small
@@ -152,82 +340,570 @@ public class ContactDetector implements ILoggingControl {
             return null;
         }
 
-        // Create a ghost object for the sweep test
-        GhostObject ghostObject = createGhostObjectForEntity(entity);
-        if (ghostObject == null) {
-            // Fall back to basic sweep test
-            return sweepTest(entity, movement);
+        // Track sweep tests for debugging
+        sweepTestCount++;
+
+        boolean isPlayer = entity instanceof PlayerEntity;
+
+        // Debug log for players
+        if (DEBUG_COLLISIONS && isPlayer) {
+            SLogger.log(this, String.format(
+                    "Performing convex sweep test for player. Movement=(%.4f, %.4f, %.4f)",
+                    movement.x, movement.y, movement.z));
         }
 
+        // Get the entity's collision object
+        CollisionObject entityCollisionObject = getEntityCollisionObject(entity);
+        if (entityCollisionObject == null) {
+            if (DEBUG_COLLISIONS && isPlayer) {
+                SLogger.log(this, "No collision object found for player");
+            }
+            return null;
+        }
+
+        // Make sure we're using the right collision shape (from the EntityProxy)
+        CollisionShape entityShape = entityCollisionObject.getCollisionShape();
+        if (!(entityShape instanceof ConvexShape)) {
+            // If it's not a convex shape, we can't do a convex sweep test
+            if (DEBUG_COLLISIONS) {
+                SLogger.log(this, "Entity shape is not a convex shape: " + entityShape.getClass().getSimpleName());
+            }
+            return null;
+        }
+
+        // Get the current transform
+        Transform startTransform = new Transform();
+        entityCollisionObject.getWorldTransform(startTransform);
+
+        // Calculate end transform
+        Transform endTransform = new Transform(startTransform);
+        endTransform.origin.x += (float) movement.x;
+        endTransform.origin.y += (float) movement.y;
+        endTransform.origin.z += (float) movement.z;
+
+        SweepResult closestResult = null;
+        float closestHitFraction = 1.0f;
+
         synchronized (physicsEngine.getPhysicsLock()) {
-            try {
-                // Add ghost object to our dedicated collision world
-                ghostCollisionWorld.addCollisionObject(ghostObject);
+            DynamicsWorld dynamicsWorld = physicsEngine.getDynamicsWorld();
 
-                // Create current and target transforms
-                Transform currentTransform = new Transform();
-                ghostObject.getWorldTransform(currentTransform);
+            // 1. First check for collisions with grid rigid bodies
+            for (LocalGrid grid : physicsEngine.getGrids()) {
+                RigidBody gridBody = grid.getRigidBody();
+                if (gridBody == null) continue;
 
-                Transform targetTransform = new Transform(currentTransform);
-                targetTransform.origin.x += (float) movement.x;
-                targetTransform.origin.y += (float) movement.y;
-                targetTransform.origin.z += (float) movement.z;
+                // Skip if this is the entity's own grid
+                if (gridBody.getUserPointer() == entity) continue;
 
-                // Temporarily add all collision objects from dynamics world to our ghost world
-                DynamicsWorld dynamicsWorld = physicsEngine.getDynamicsWorld();
-                List<CollisionObject> tempObjects = new ArrayList<>();
+                // Create callback for this specific sweep test
+                ClosestConvexResultCallback callback = new ClosestConvexResultCallback(new Vector3f(), new Vector3f());
 
-                int numCollisionObjects = dynamicsWorld.getNumCollisionObjects();
-                for (int i = 0; i < numCollisionObjects; i++) {
-                    CollisionObject obj = dynamicsWorld.getCollisionObjectArray().getQuick(i);
+                // Perform sweep test against this grid
+                dynamicsWorld.convexSweepTest((ConvexShape)entityShape, startTransform, endTransform, callback);
 
-                    // Skip the entity we're testing
-                    if (obj.getUserPointer() != entity && shouldConsiderForCollision(obj, entity)) {
-                        // Create a copy of the collision object
-                        CollisionObject copy = new CollisionObject();
-                        copy.setCollisionShape(obj.getCollisionShape());
-                        Transform objTransform = new Transform();
-                        obj.getWorldTransform(objTransform);
-                        copy.setWorldTransform(objTransform);
-                        copy.setUserPointer(obj.getUserPointer());
+                // Check if we hit this grid
+                if (callback.hasHit() && callback.closestHitFraction < closestHitFraction) {
+                    closestHitFraction = callback.closestHitFraction;
 
-                        ghostCollisionWorld.addCollisionObject(copy);
-                        tempObjects.add(copy);
-                    }
-                }
-
-                // Perform the sweep test using our own implementation
-                MultiSweepCallback callback = new MultiSweepCallback(ghostObject);
-                convexSweepTestInternal(ghostObject, currentTransform, targetTransform, callback);
-
-                // If we hit something, create a sweep result
-                if (callback.hasHit()) {
-                    // Create a sweep result from the closest hit
-                    SweepResult result = createSweepResult(
-                            callback.getClosestHitFraction(),
-                            callback.getClosestHitNormal(),
-                            callback.getClosestHitPoint(),
-                            callback.getClosestHitObject(),
+                    // Create a sweep result from this hit
+                    closestResult = new SweepResult(
+                            callback.closestHitFraction,
+                            new Vector3f(callback.hitNormalWorld),
+                            new Vector3f(callback.hitPointWorld),
+                            grid, // Grid that was hit
+                            null, // No entity collision
                             entity
                     );
 
-                    // Store all hits in the result for multi-contact resolution
-                    result.setAllHits(callback.getAllHits());
-
-                    return result;
+                    if (DEBUG_COLLISIONS && isPlayer) {
+                        SLogger.log(this, String.format(
+                                "jBullet sweep test hit grid %s at fraction %.4f, normal=(%.2f, %.2f, %.2f)",
+                                grid.getGridId(),
+                                callback.closestHitFraction,
+                                callback.hitNormalWorld.x,
+                                callback.hitNormalWorld.y,
+                                callback.hitNormalWorld.z));
+                    }
                 }
+            }
 
-                // Clean up temporary objects
-                for (CollisionObject obj : tempObjects) {
-                    ghostCollisionWorld.removeCollisionObject(obj);
+            // 2. Now check for collisions with other entities
+            for (Map.Entry<Entity, EntityProxy> entry : entityProxies.entrySet()) {
+                Entity otherEntity = entry.getKey();
+                EntityProxy otherProxy = entry.getValue();
+
+                // Skip self or invalid proxies
+                if (otherEntity == entity || !otherProxy.isActive()) continue;
+
+                CollisionObject otherCollisionObject = otherProxy.getCollisionObject();
+                if (otherCollisionObject == null) continue;
+
+                // Check for collision at start position
+                boolean startCollision = checkCollision(entityCollisionObject, otherCollisionObject);
+
+                // If already colliding, create a result with time=0
+                if (startCollision) {
+                    // We're already colliding, create a result with estimated info
+                    Vector3f normal = estimateCollisionNormal(entityCollisionObject, otherCollisionObject);
+                    Vector3f contactPoint = estimateContactPoint(entityCollisionObject, otherCollisionObject);
+
+                    SweepResult result = new SweepResult(
+                            0.0f, // Already colliding
+                            normal,
+                            contactPoint,
+                            null, // No grid collision
+                            otherEntity,
+                            entity
+                    );
+
+                    if (closestResult == null || result.getTimeOfImpact() < closestResult.getTimeOfImpact()) {
+                        closestResult = result;
+                    }
+
+                    if (DEBUG_COLLISIONS && isPlayer) {
+                        SLogger.log(this, String.format(
+                                "Already colliding with entity %s, normal=(%.2f, %.2f, %.2f)",
+                                otherEntity.getUuidAsString(),
+                                normal.x, normal.y, normal.z));
+                    }
                 }
+                // If not already colliding, check for collision at end position
+                else {
+                    // Move entity to end position
+                    Transform tempTransform = new Transform(startTransform);
+                    tempTransform.origin.set(endTransform.origin);
 
-                return null;
-            } finally {
-                // Always remove ghost object from collision world
-                ghostCollisionWorld.removeCollisionObject(ghostObject);
+                    // Save original transform
+                    Transform originalTransform = new Transform();
+                    entityCollisionObject.getWorldTransform(originalTransform);
+
+                    // Temporarily set entity transform to end position
+                    entityCollisionObject.setWorldTransform(tempTransform);
+
+                    // Check for collision at end position
+                    boolean endCollision = checkCollision(entityCollisionObject, otherCollisionObject);
+
+                    // Restore original transform
+                    entityCollisionObject.setWorldTransform(originalTransform);
+
+                    if (endCollision) {
+                        // We'd collide at the end, so estimate a time of impact
+                        // For simplicity, use 0.5 as the time of impact
+                        float timeOfImpact = 0.5f;
+
+                        // Estimate normal and contact point
+                        Vector3f normal = estimateCollisionNormal(entityCollisionObject, otherCollisionObject);
+                        Vector3f contactPoint = estimateContactPoint(entityCollisionObject, otherCollisionObject);
+
+                        SweepResult result = new SweepResult(
+                                timeOfImpact,
+                                normal,
+                                contactPoint,
+                                null, // No grid collision
+                                otherEntity,
+                                entity
+                        );
+
+                        if (closestResult == null || result.getTimeOfImpact() < closestResult.getTimeOfImpact()) {
+                            closestResult = result;
+                        }
+
+                        if (DEBUG_COLLISIONS && isPlayer) {
+                            SLogger.log(this, String.format(
+                                    "Would collide with entity %s at end of movement, normal=(%.2f, %.2f, %.2f)",
+                                    otherEntity.getUuidAsString(),
+                                    normal.x, normal.y, normal.z));
+                        }
+                    }
+                }
             }
         }
+
+        // If we found a collision, return the closest result
+        if (closestResult != null) {
+            hitDetectionCount++;
+            return closestResult;
+        }
+
+        // No collision detected
+        if (DEBUG_COLLISIONS && isPlayer) {
+            SLogger.log(this, "Player sweep test found no collisions");
+        }
+
+        return null;
+    }
+
+    /**
+     * Detects contacts between an entity and other objects.
+     * This method properly uses jBullet's collision detection for all shape types.
+     */
+    public List<Contact> detectContacts(Entity entity) {
+        List<Contact> contacts = new ArrayList<>();
+        boolean isPlayer = entity instanceof PlayerEntity;
+
+        synchronized (physicsEngine.getPhysicsLock()) {
+            // Get the entity's collision object
+            CollisionObject entityCollisionObject = getEntityCollisionObject(entity);
+            if (entityCollisionObject == null) {
+                if (DEBUG_COLLISIONS && isPlayer) {
+                    SLogger.log(this, "Player collision object not found in detectContacts");
+                }
+                return contacts;
+            }
+
+            // Create a collision dispatcher
+            CollisionDispatcher dispatcher = (CollisionDispatcher) physicsEngine.getDynamicsWorld().getDispatcher();
+
+            // 1. Check for collisions with grids
+            for (LocalGrid grid : physicsEngine.getGrids()) {
+                RigidBody gridBody = grid.getRigidBody();
+                if (gridBody == null) continue;
+
+                // Skip if this is the entity's own grid
+                if (gridBody.getUserPointer() == entity) continue;
+
+                // Get collision algorithm for this pair
+                CollisionAlgorithm algorithm = dispatcher.findAlgorithm(
+                        entityCollisionObject, gridBody,
+                        null
+                );
+
+                if (algorithm == null) continue;
+
+                // Create a temporary manifold to store contact points
+                PersistentManifold manifold = new PersistentManifold();
+
+                // Process collision
+                algorithm.processCollision(entityCollisionObject, gridBody, null, manifold);
+
+                // Extract contact points
+                int numContacts = manifold.getNumContacts();
+                for (int i = 0; i < numContacts; i++) {
+                    ManifoldPoint contactPoint = manifold.getContactPoint(i);
+
+                    // Get penetration depth
+                    float penetration = -contactPoint.getDistance();
+
+                    // Skip if penetration is too small
+                    if (penetration < MIN_PENETRATION_FOR_CONTACT) {
+                        continue;
+                    }
+
+                    // Get contact normal (pointing from B to A)
+                    Vector3f normal = new Vector3f(contactPoint.normalWorldOnB);
+
+                    // The normal points from B to A, but we want it to point from grid to entity
+                    // If the entity is A, we need to negate the normal
+                    if (entityCollisionObject == manifold.getBody0()) {
+                        normal.negate();
+                    }
+
+                    // Ensure the normal is normalized
+                    if (normal.lengthSquared() > 0) {
+                        normal.normalize();
+                    } else {
+                        normal.set(0, 1, 0); // Default to up if normal is zero
+                    }
+
+                    // Get contact point in world space
+                    Vector3f contactPointWorld = new Vector3f();
+                    if (entityCollisionObject == manifold.getBody0()) {
+                        contactPoint.getPositionWorldOnA(contactPointWorld);
+                    } else {
+                        contactPoint.getPositionWorldOnB(contactPointWorld);
+                    }
+
+                    // Create a contact
+                    Contact contact = new Contact(entity, grid, null, normal, contactPointWorld, penetration);
+
+                    // Add grid velocity
+                    Vector3f gridVelocity = grid.getVelocityAtPoint(contactPointWorld);
+                    contact.setGridVelocityAtContactPoint(gridVelocity);
+
+                    contacts.add(contact);
+                }
+
+                // Clean up
+                dispatcher.freeCollisionAlgorithm(algorithm);
+            }
+
+            // 2. Check for collisions with other entities
+            for (Map.Entry<Entity, EntityProxy> entry : entityPhysicsManager.getEntityProxies().entrySet()) {
+                Entity otherEntity = entry.getKey();
+                EntityProxy otherProxy = entry.getValue();
+
+                // Skip self or invalid proxies
+                if (otherEntity == entity || !otherProxy.isActive()) continue;
+
+                CollisionObject otherCollisionObject = otherProxy.getCollisionObject();
+                if (otherCollisionObject == null) continue;
+
+                // Get collision algorithm for this pair
+                CollisionAlgorithm algorithm = dispatcher.findAlgorithm(
+                        entityCollisionObject, otherCollisionObject,
+                        null
+                );
+
+                if (algorithm == null) continue;
+
+                // Create a temporary manifold to store contact points
+                PersistentManifold manifold = new PersistentManifold();
+
+                // Process collision
+                algorithm.processCollision(entityCollisionObject, otherCollisionObject, null, manifold);
+
+                // Extract contact points
+                int numContacts = manifold.getNumContacts();
+                for (int i = 0; i < numContacts; i++) {
+                    ManifoldPoint contactPoint = manifold.getContactPoint(i);
+
+                    // Get penetration depth
+                    float penetration = -contactPoint.getDistance();
+
+                    // Skip if penetration is too small
+                    if (penetration < MIN_PENETRATION_FOR_CONTACT) {
+                        continue;
+                    }
+
+                    // Get contact normal (pointing from B to A)
+                    Vector3f normal = new Vector3f(contactPoint.normalWorldOnB);
+
+                    // The normal points from B to A, but we want it to point from other entity to this entity
+                    // If this entity is A, we need to negate the normal
+                    if (entityCollisionObject == manifold.getBody0()) {
+                        normal.negate();
+                    }
+
+                    // Ensure the normal is normalized
+                    if (normal.lengthSquared() > 0) {
+                        normal.normalize();
+                    } else {
+                        normal.set(0, 1, 0); // Default to up if normal is zero
+                    }
+
+                    // Get contact point in world space
+                    Vector3f contactPointWorld = new Vector3f();
+                    if (entityCollisionObject == manifold.getBody0()) {
+                        contactPoint.getPositionWorldOnA(contactPointWorld);
+                    } else {
+                        contactPoint.getPositionWorldOnB(contactPointWorld);
+                    }
+
+                    // Create a contact
+                    Contact contact = new Contact(entity, null, otherEntity, normal, contactPointWorld, penetration);
+                    contacts.add(contact);
+                }
+
+                // Clean up
+                dispatcher.freeCollisionAlgorithm(algorithm);
+            }
+        }
+
+        // Debug log the contacts
+        if (DEBUG_COLLISIONS && isPlayer && !contacts.isEmpty()) {
+            SLogger.log(this, String.format("Detected %d contacts for player", contacts.size()));
+            for (int i = 0; i < contacts.size(); i++) {
+                Contact contact = contacts.get(i);
+                Vector3f normal = contact.getContactNormal();
+                String contactType = contact.isGridContact() ? "grid" : "entity";
+
+                SLogger.log(this, String.format(
+                        "Contact %d: type=%s, normal=(%.2f, %.2f, %.2f), depth=%.4f, ground=%s",
+                        i, contactType, normal.x, normal.y, normal.z,
+                        contact.getPenetrationDepth(),
+                        contact.isGroundContact() ? "true" : "false"));
+            }
+        }
+
+        // Store contacts for later use
+        entityContacts.put(entity, contacts);
+
+        return contacts;
+    }
+
+    /**
+     * Performs a direct collision test between an entity and a grid without relying on jBullet.
+     * This is more reliable for detecting grid collisions than sweep tests.
+     */
+    private boolean directGridCollisionTest(Entity entity, LocalGrid grid) {
+        // Get entity AABB
+        Box entityBox = entity.getBoundingBox();
+
+        // Get grid AABB
+        Vector3f gridMin = new Vector3f();
+        Vector3f gridMax = new Vector3f();
+        grid.getAABB(gridMin, gridMax);
+
+        // Convert to Box for easier testing
+        Box gridBox = new Box(
+                gridMin.x, gridMin.y, gridMin.z,
+                gridMax.x, gridMax.y, gridMax.z
+        );
+
+        // If AABBs don't intersect, no collision
+        if (!entityBox.intersects(gridBox)) {
+            return false;
+        }
+
+        // Now we need a more detailed test - use a small margin to detect near misses
+        double margin = 0.05;
+
+        // Get entity center
+        double entityCenterX = (entityBox.minX + entityBox.maxX) / 2;
+        double entityCenterY = (entityBox.minY + entityBox.maxY) / 2;
+        double entityCenterZ = (entityBox.minZ + entityBox.maxZ) / 2;
+
+        // Get entity half-extents
+        double entityHalfWidth = (entityBox.maxX - entityBox.minX) / 2;
+        double entityHalfHeight = (entityBox.maxY - entityBox.minY) / 2;
+        double entityHalfDepth = (entityBox.maxZ - entityBox.minZ) / 2;
+
+        // Get the grid center and half-extents
+        double gridCenterX = (gridMin.x + gridMax.x) / 2;
+        double gridCenterY = (gridMin.y + gridMax.y) / 2;
+        double gridCenterZ = (gridMin.z + gridMax.z) / 2;
+
+        double gridHalfWidth = (gridMax.x - gridMin.x) / 2;
+        double gridHalfHeight = (gridMax.y - gridMin.y) / 2;
+        double gridHalfDepth = (gridMax.z - gridMin.z) / 2;
+
+        // Calculate distance between centers on each axis
+        double distX = Math.abs(entityCenterX - gridCenterX);
+        double distY = Math.abs(entityCenterY - gridCenterY);
+        double distZ = Math.abs(entityCenterZ - gridCenterZ);
+
+        // Calculate sum of half-extents on each axis
+        double sumHalfWidth = entityHalfWidth + gridHalfWidth;
+        double sumHalfHeight = entityHalfHeight + gridHalfHeight;
+        double sumHalfDepth = entityHalfDepth + gridHalfDepth;
+
+        // If the distance between centers is less than the sum of half-extents plus margin,
+        // we have a collision or near-collision on that axis
+        boolean collisionX = distX <= sumHalfWidth + margin;
+        boolean collisionY = distY <= sumHalfHeight + margin;
+        boolean collisionZ = distZ <= sumHalfDepth + margin;
+
+        // We need collision on all three axes for 3D intersection
+        return collisionX && collisionY && collisionZ;
+    }
+
+    /**
+     * Estimates the collision normal between an entity and a grid.
+     */
+    private Vector3f estimateGridNormal(Entity entity, LocalGrid grid) {
+        // Get entity AABB
+        Box entityBox = entity.getBoundingBox();
+
+        // Get grid AABB
+        Vector3f gridMin = new Vector3f();
+        Vector3f gridMax = new Vector3f();
+        grid.getAABB(gridMin, gridMax);
+
+        // Get entity center
+        double entityCenterX = (entityBox.minX + entityBox.maxX) / 2;
+        double entityCenterY = (entityBox.minY + entityBox.maxY) / 2;
+        double entityCenterZ = (entityBox.minZ + entityBox.maxZ) / 2;
+
+        // Get the grid center
+        double gridCenterX = (gridMin.x + gridMax.x) / 2;
+        double gridCenterY = (gridMin.y + gridMax.y) / 2;
+        double gridCenterZ = (gridMin.z + gridMax.z) / 2;
+
+        // Direction from grid to entity
+        double dirX = entityCenterX - gridCenterX;
+        double dirY = entityCenterY - gridCenterY;
+        double dirZ = entityCenterZ - gridCenterZ;
+
+        // Find which axis has the smallest penetration
+        double gridHalfWidth = (gridMax.x - gridMin.x) / 2;
+        double gridHalfHeight = (gridMax.y - gridMin.y) / 2;
+        double gridHalfDepth = (gridMax.z - gridMin.z) / 2;
+
+        double penetrationX = gridHalfWidth - Math.abs(dirX);
+        double penetrationY = gridHalfHeight - Math.abs(dirY);
+        double penetrationZ = gridHalfDepth - Math.abs(dirZ);
+
+        // Create normal based on smallest penetration axis
+        Vector3f normal = new Vector3f(0, 0, 0);
+
+        // Determine which axis has the smallest penetration (closest to grid edge)
+        if (penetrationX <= penetrationY && penetrationX <= penetrationZ) {
+            // X-axis has smallest penetration
+            normal.x = dirX > 0 ? 1.0f : -1.0f;
+        } else if (penetrationY <= penetrationX && penetrationY <= penetrationZ) {
+            // Y-axis has smallest penetration
+            normal.y = dirY > 0 ? 1.0f : -1.0f;
+        } else {
+            // Z-axis has smallest penetration
+            normal.z = dirZ > 0 ? 1.0f : -1.0f;
+        }
+
+        return normal;
+    }
+
+    /**
+     * Estimates a contact point between an entity and a grid.
+     */
+    private Vector3f estimateGridContactPoint(Entity entity, LocalGrid grid) {
+        // Get entity AABB
+        Box entityBox = entity.getBoundingBox();
+
+        // Get grid AABB
+        Vector3f gridMin = new Vector3f();
+        Vector3f gridMax = new Vector3f();
+        grid.getAABB(gridMin, gridMax);
+
+        // Get entity center
+        double entityCenterX = (entityBox.minX + entityBox.maxX) / 2;
+        double entityCenterY = (entityBox.minY + entityBox.maxY) / 2;
+        double entityCenterZ = (entityBox.minZ + entityBox.maxZ) / 2;
+
+        // Get the grid center
+        double gridCenterX = (gridMin.x + gridMax.x) / 2;
+        double gridCenterY = (gridMin.y + gridMax.y) / 2;
+        double gridCenterZ = (gridMin.z + gridMax.z) / 2;
+
+        // Direction from grid to entity
+        double dirX = entityCenterX - gridCenterX;
+        double dirY = entityCenterY - gridCenterY;
+        double dirZ = entityCenterZ - gridCenterZ;
+
+        // Get grid half-extents
+        double gridHalfWidth = (gridMax.x - gridMin.x) / 2;
+        double gridHalfHeight = (gridMax.y - gridMin.y) / 2;
+        double gridHalfDepth = (gridMax.z - gridMin.z) / 2;
+
+        // Clamp direction to grid surface
+        double surfaceX = gridCenterX + Math.signum(dirX) * gridHalfWidth;
+        double surfaceY = gridCenterY + Math.signum(dirY) * gridHalfHeight;
+        double surfaceZ = gridCenterZ + Math.signum(dirZ) * gridHalfDepth;
+
+        // Find intersection point - closest point on grid surface to entity center
+        Vector3f contactPoint = new Vector3f();
+
+        // Determine which axis has the smallest penetration (closest to grid edge)
+        double penetrationX = gridHalfWidth - Math.abs(dirX);
+        double penetrationY = gridHalfHeight - Math.abs(dirY);
+        double penetrationZ = gridHalfDepth - Math.abs(dirZ);
+
+        if (penetrationX <= penetrationY && penetrationX <= penetrationZ) {
+            // X-axis has smallest penetration - contact point is on X face
+            contactPoint.x = (float)surfaceX;
+            contactPoint.y = (float)entityCenterY;
+            contactPoint.z = (float)entityCenterZ;
+        } else if (penetrationY <= penetrationX && penetrationY <= penetrationZ) {
+            // Y-axis has smallest penetration - contact point is on Y face
+            contactPoint.x = (float)entityCenterX;
+            contactPoint.y = (float)surfaceY;
+            contactPoint.z = (float)entityCenterZ;
+        } else {
+            // Z-axis has smallest penetration - contact point is on Z face
+            contactPoint.x = (float)entityCenterX;
+            contactPoint.y = (float)entityCenterY;
+            contactPoint.z = (float)surfaceZ;
+        }
+
+        return contactPoint;
     }
 
     /**
@@ -235,11 +911,6 @@ public class ContactDetector implements ILoggingControl {
      */
     private void convexSweepTestInternal(GhostObject ghostObject, Transform from,
                                          Transform to, MultiSweepCallback callback) {
-        // Implementation would use custom collision detection logic
-        // to step through the movement and collect all contacts
-
-        // For now, we'll use a simplified approach with bullet's existing methods
-
         // Calculate movement vector
         Vector3f movementVec = new Vector3f();
         movementVec.sub(to.origin, from.origin);
@@ -289,10 +960,8 @@ public class ContactDetector implements ILoggingControl {
                 callback.addHit(overlappingObject, t, hitPoint, normal);
 
                 // If this is a penetrating contact, we might want to break early
-                // and report the first significant contact
                 if (t < 0.1f) {
                     // This means we're already intersecting at the start
-                    // We should handle this as a special case
                     callback.setPenetratingContact(true);
                 }
             }
@@ -335,30 +1004,6 @@ public class ContactDetector implements ILoggingControl {
     }
 
     /**
-     * Estimates the contact point between two collision objects.
-     */
-    private Vector3f estimateContactPoint(CollisionObject objA, CollisionObject objB) {
-        // Get centers of both objects
-        Vector3f centerA = new Vector3f();
-        Vector3f centerB = new Vector3f();
-
-        Transform transA = new Transform();
-        Transform transB = new Transform();
-        objA.getWorldTransform(transA);
-        objB.getWorldTransform(transB);
-
-        centerA.set(transA.origin);
-        centerB.set(transB.origin);
-
-        // Use midpoint as contact point
-        Vector3f contactPoint = new Vector3f();
-        contactPoint.add(centerA, centerB);
-        contactPoint.scale(0.5f);
-
-        return contactPoint;
-    }
-
-    /**
      * Determines if an object should be considered for collision with an entity.
      */
     private boolean shouldConsiderForCollision(CollisionObject obj, Entity entity) {
@@ -374,8 +1019,12 @@ public class ContactDetector implements ILoggingControl {
                 return false;
             }
 
-            // Check if both entities should interact
-            // For now, we'll consider all entities
+            // Skip entities that shouldn't interact
+            Entity otherEntity = proxy.getEntity();
+            if (!shouldEntitiesInteract(entity, otherEntity)) {
+                return false;
+            }
+
             return true;
         }
 
@@ -386,6 +1035,20 @@ public class ContactDetector implements ILoggingControl {
         }
 
         // Consider collision by default
+        return true;
+    }
+
+    /**
+     * Determines if two entities should interact with each other.
+     * Override this for entity-specific collision filtering.
+     */
+    private boolean shouldEntitiesInteract(Entity entity1, Entity entity2) {
+        // Players shouldn't collide with other players for now
+        if (entity1 instanceof PlayerEntity && entity2 instanceof PlayerEntity) {
+            return false;
+        }
+
+        // Default: allow entities to interact
         return true;
     }
 
@@ -497,91 +1160,6 @@ public class ContactDetector implements ILoggingControl {
     }
 
     /**
-     * Detects contacts between an entity and other objects.
-     * Called after movement to identify and handle penetrations.
-     *
-     * @param entity The entity to check
-     * @return List of contacts for the entity
-     */
-    public List<Contact> detectContacts(Entity entity) {
-        List<Contact> contacts = new ArrayList<>();
-
-        synchronized (physicsEngine.getPhysicsLock()) {
-            // Get the entity's collision object
-            CollisionObject entityCollisionObject = getEntityCollisionObject(entity);
-            if (entityCollisionObject == null) {
-                return contacts;
-            }
-
-            // Check for collisions with all other objects
-            DynamicsWorld dynamicsWorld = physicsEngine.getDynamicsWorld();
-            int numManifolds = dynamicsWorld.getDispatcher().getNumManifolds();
-
-            for (int i = 0; i < numManifolds; i++) {
-                PersistentManifold manifold = dynamicsWorld.getDispatcher().getManifoldByIndexInternal(i);
-
-                // Get the two collision objects
-                CollisionObject objA = (CollisionObject) manifold.getBody0();
-                CollisionObject objB = (CollisionObject) manifold.getBody1();
-
-                // Check if either object is our entity
-                boolean isEntityA = isEntityObject(objA, entity);
-                boolean isEntityB = isEntityObject(objB, entity);
-
-                if (!isEntityA && !isEntityB) {
-                    // Neither object is our entity
-                    continue;
-                }
-
-                // Get the other object
-                CollisionObject otherObject = isEntityA ? objB : objA;
-                boolean swapped = isEntityB; // If entity is B, we need to swap normal
-
-                // Process each contact point in the manifold
-                int numContacts = manifold.getNumContacts();
-                for (int j = 0; j < numContacts; j++) {
-                    ManifoldPoint contactPoint = manifold.getContactPoint(j);
-
-                    // Get penetration depth
-                    float penetration = -contactPoint.getDistance();
-
-                    // Skip if penetration is too small
-                    if (penetration < MIN_PENETRATION_FOR_CONTACT) {
-                        continue;
-                    }
-
-                    // Get contact normal and point
-                    Vector3f normal = new Vector3f(contactPoint.normalWorldOnB);
-
-                    // Swap normal if needed
-                    if (swapped) {
-                        normal.negate();
-                    }
-
-                    // Get the contact point in world space
-                    Vector3f contactPointWorld = new Vector3f();
-                    if (swapped) {
-                        contactPoint.getPositionWorldOnA(contactPointWorld);
-                    } else {
-                        contactPoint.getPositionWorldOnB(contactPointWorld);
-                    }
-
-                    // Create a contact
-                    Contact contact = createContact(entity, otherObject, normal, contactPointWorld, penetration);
-                    if (contact != null) {
-                        contacts.add(contact);
-                    }
-                }
-            }
-        }
-
-        // Update the entity's contacts
-        entityContacts.put(entity, contacts);
-
-        return contacts;
-    }
-
-    /**
      * Collects all current contacts for all tracked entities.
      *
      * @return Map of entities to their contacts
@@ -594,11 +1172,20 @@ public class ContactDetector implements ILoggingControl {
         Set<Entity> trackedEntities = entityPhysicsManager.getTrackedEntities();
 
         // Detect contacts for each entity
+        int totalContacts = 0;
         for (Entity entity : trackedEntities) {
             List<Contact> contacts = detectContacts(entity);
             if (!contacts.isEmpty()) {
                 entityContacts.put(entity, contacts);
+                totalContacts += contacts.size();
             }
+        }
+
+        // Log contact collection stats
+        if (DEBUG_COLLISIONS && totalContacts > 0) {
+            SLogger.log(this, String.format(
+                    "Collected %d contacts for %d entities (of %d tracked)",
+                    totalContacts, entityContacts.size(), trackedEntities.size()));
         }
 
         return Collections.unmodifiableMap(entityContacts);
@@ -726,7 +1313,7 @@ public class ContactDetector implements ILoggingControl {
         // Get the collision objects
         CollisionObject entityObj = proxy.getCollisionObject();
 
-        // Simple AABB overlap check
+        // Simple AABB overlap check first
         Transform entityTransform = new Transform();
         Transform gridTransform = new Transform();
 
@@ -774,6 +1361,27 @@ public class ContactDetector implements ILoggingControl {
         return false;
     }
 
+    /**
+     * Gets statistics about collision detection.
+     *
+     * @return A string containing collision stats
+     */
+    public String getCollisionStats() {
+        return String.format(
+                "Sweep tests: %d, Hits detected: %d, Entities with contacts: %d",
+                sweepTestCount,
+                hitDetectionCount,
+                entityContacts.size());
+    }
+
+    /**
+     * Resets collision statistics.
+     */
+    public void resetCollisionStats() {
+        sweepTestCount = 0;
+        hitDetectionCount = 0;
+    }
+
     @Override
     public boolean stardance$isChatLoggingEnabled() {
         return false;
@@ -781,7 +1389,7 @@ public class ContactDetector implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true;
+        return true; // Enable console logging for debugging
     }
 
     /**
@@ -887,11 +1495,8 @@ public class ContactDetector implements ILoggingControl {
         }
 
         /**
-         * Calculates a deflected movement after the collision.
-         *
-         * @param originalMovement Original movement vector
-         * @param remainingTime Fraction of movement remaining after collision
-         * @return Deflected movement vector
+         * Fixed deflected movement calculation for SweepResult class.
+         * This improves the handling of sliding motion when colliding at an angle.
          */
         public Vec3d getDeflectedMovement(Vec3d originalMovement, float remainingTime) {
             if (remainingTime <= 0.0f) {
@@ -905,35 +1510,67 @@ public class ContactDetector implements ILoggingControl {
                     (float) originalMovement.z
             );
 
+            // Original movement length for reference
+            float originalLength = movement.length();
+            if (originalLength < 0.0001f) {
+                return Vec3d.ZERO;
+            }
+
             // Calculate remaining movement magnitude
-            float remainingMagnitude = movement.length() * remainingTime;
+            float remainingMagnitude = originalLength * remainingTime;
 
             // Project remaining movement onto collision plane
             Vector3f normal = new Vector3f(hitNormal);
             normal.normalize();
 
-            // Calculate dot product
+            // Calculate dot product to get component along normal
             float dot = movement.dot(normal);
 
             // Only deflect if moving into the surface
             if (dot < 0) {
-                // Remove normal component from movement
+                // Calculate the parallel component by removing the normal component
                 Vector3f normalComponent = new Vector3f(normal);
                 normalComponent.scale(dot);
-                movement.sub(normalComponent);
 
-                // Renormalize and scale by remaining magnitude
-                if (movement.lengthSquared() > 1e-6f) {
-                    movement.normalize();
-                    movement.scale(remainingMagnitude);
-                } else {
-                    // Movement is directly into normal, cancel it
-                    movement.set(0, 0, 0);
+                Vector3f tangentialComponent = new Vector3f(movement);
+                tangentialComponent.sub(normalComponent);
+
+                // Calculate the magnitude of the tangential component
+                float tangentialLength = tangentialComponent.length();
+
+                // If tangential component is too small, just return zero
+                if (tangentialLength < 0.0001f) {
+                    return Vec3d.ZERO;
                 }
+
+                // Normalize the tangential component
+                tangentialComponent.scale(1.0f / tangentialLength);
+
+                // Calculate the appropriate magnitude for the deflected movement
+                // Use a factor of the original magnitude (not exceeding the original length)
+                // This is a key fix - previously it might have expanded to the full magnitude
+                float deflectedMagnitude = Math.min(remainingMagnitude * 0.8f, tangentialLength * remainingTime);
+
+                // Scale the tangential component to the appropriate magnitude
+                tangentialComponent.scale(deflectedMagnitude);
+
+                // Convert back to Vec3d
+                return new Vec3d(tangentialComponent.x, tangentialComponent.y, tangentialComponent.z);
             }
 
-            // Convert back to Vec3d
-            return new Vec3d(movement.x, movement.y, movement.z);
+            // If not moving into surface, allow full movement
+            return originalMovement.multiply(remainingTime);
+        }
+
+        @Override
+        public String toString() {
+            String collisionTarget = grid != null ? "grid" : (collidedEntity != null ? collidedEntity.getEntityName() : "unknown");
+            return String.format(
+                    "SweepResult{time=%.4f, target=%s, normal=(%.2f, %.2f, %.2f), hits=%d}",
+                    timeOfImpact,
+                    collisionTarget,
+                    hitNormal.x, hitNormal.y, hitNormal.z,
+                    allHits.size());
         }
     }
 

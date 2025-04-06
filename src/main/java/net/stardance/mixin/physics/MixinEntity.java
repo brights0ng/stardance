@@ -12,6 +12,7 @@ import net.minecraft.util.math.Vec3d;
 import net.stardance.physics.PhysicsEngine;
 import net.stardance.physics.entity.CollisionResolver;
 import net.stardance.physics.entity.Contact;
+import net.stardance.physics.entity.ContactDetector;
 import net.stardance.physics.entity.ContactDetector.SweepResult;
 import net.stardance.Stardance;
 import net.stardance.physics.entity.EntityPhysicsManager;
@@ -50,6 +51,9 @@ public abstract class MixinEntity implements ILoggingControl {
     @Shadow
     public abstract boolean isOnGround();
 
+    @Shadow
+    public abstract void setOnGround(boolean onGround);
+
     @Shadow protected abstract void tryCheckBlockCollision();
 
     @Shadow public abstract boolean isFireImmune();
@@ -71,7 +75,7 @@ public abstract class MixinEntity implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return false;
+        return true; // Enabling console logging for debugging
     }
 
     /**
@@ -87,30 +91,57 @@ public abstract class MixinEntity implements ILoggingControl {
     )
     private Vec3d collideWithGrids(Entity entity, Vec3d originalMovement, Operation<Vec3d> vanillaCollide) {
         // Skip for non-physical entities
+        if (entity.isSpectator() || entity.noClip) {
+            return vanillaCollide.call(entity, originalMovement);
+        }
+
         // Get physics engine
         PhysicsEngine engine = Stardance.engineManager.getEngine(entity.getWorld());
-        if (entity.isSpectator() || entity.noClip || engine == null || !engine.getEntityPhysicsManager().getTrackedEntities().contains(entity)) {
+        if (engine == null) {
+            return vanillaCollide.call(entity, originalMovement);
+        }
+
+        EntityPhysicsManager manager = engine.getEntityPhysicsManager();
+        if (manager == null || !manager.getTrackedEntities().contains(entity)) {
             return vanillaCollide.call(entity, originalMovement);
         }
 
         // Get the entity's current bounding box for collision detection
         Box entityBox = entity.getBoundingBox();
 
+        // Store original movement for debugging and comparison
+        Vec3d originalMovementCopy = new Vec3d(originalMovement.x, originalMovement.y, originalMovement.z);
+
         // Adjust movement for grid collisions first
         Vec3d adjustedMovement = adjustMovementForGridCollisions(entity, originalMovement, entityBox);
-        LOGGER.info("Original: " + originalMovement + ", Adjusted: " + adjustedMovement);
+
+        // Debug log only when movement is actually adjusted
+        if (!adjustedMovement.equals(originalMovement) && originalMovement.lengthSquared() > 0.0001) {
+            SLogger.log(this, String.format("Entity %s movement adjusted - Original: (%.4f, %.4f, %.4f), Adjusted: (%.4f, %.4f, %.4f)",
+                    entity.getEntityName(),
+                    originalMovement.x, originalMovement.y, originalMovement.z,
+                    adjustedMovement.x, adjustedMovement.y, adjustedMovement.z));
+        }
 
         // Then let vanilla handle world block collisions
         Vec3d collisionResultWithWorld = vanillaCollide.call(entity, adjustedMovement);
 
         // If we collided with world blocks, clear any grid contact info
         double squaredDistance = calculateSquaredDistance(adjustedMovement, collisionResultWithWorld);
-        if (squaredDistance > 1e-12) {
-            // We hit a world block, so clear any grid-specific state if needed
+        if (squaredDistance > 1e-6) {
+            // We hit a world block, adjust velocity accordingly
+            manager.adjustVelocityAfterCollision(entity, adjustedMovement, collisionResultWithWorld);
+
+            // Debug log for world collision
+            SLogger.log(this, String.format("Entity %s collided with world blocks - Adjusted: (%.4f, %.4f, %.4f), Result: (%.4f, %.4f, %.4f)",
+                    entity.getEntityName(),
+                    adjustedMovement.x, adjustedMovement.y, adjustedMovement.z,
+                    collisionResultWithWorld.x, collisionResultWithWorld.y, collisionResultWithWorld.z));
         }
 
         return collisionResultWithWorld;
     }
+
     /**
      * Calculate squared distance between two vectors
      */
@@ -121,7 +152,6 @@ public abstract class MixinEntity implements ILoggingControl {
         double dz = a.z - b.z;
         return dx * dx + dy * dy + dz * dz;
     }
-
 
     /**
      * Cancel the problematic velocity zeroing in vanilla code and replace with our smarter version.
@@ -144,33 +174,55 @@ public abstract class MixinEntity implements ILoggingControl {
             return;
         }
 
+        // Calculate collision response vector
         Vector3d collisionResponse = new Vector3d(
                 collisionResult.x - movement.x,
                 collisionResult.y - movement.y,
                 collisionResult.z - movement.z
         );
 
-        if (collisionResponse.lengthSquared() > 1e-6) {
-            Vec3d currentVelocity = getVelocity();
+        // Skip if collision response is negligible
+        if (collisionResponse.lengthSquared() < 1e-6) {
+            return;
+        }
 
-            Vector3d collisionResponseNormal = new Vector3d(collisionResponse);
-            collisionResponseNormal.normalize();
+        Vec3d currentVelocity = getVelocity();
 
-            double parallelComponent = collisionResponseNormal.dot(
-                    currentVelocity.x, currentVelocity.y, currentVelocity.z
+        // Skip velocity adjustment if not moving
+        if (currentVelocity.lengthSquared() < 1e-6) {
+            return;
+        }
+
+        // Normalize collision response
+        Vector3d collisionResponseNormal = new Vector3d(collisionResponse);
+        collisionResponseNormal.normalize();
+
+        // Calculate dot product to determine if moving into the surface
+        double parallelComponent = collisionResponseNormal.dot(
+                currentVelocity.x, currentVelocity.y, currentVelocity.z
+        );
+
+        // Only remove the parallel component of velocity if moving into the surface
+        if (parallelComponent < 0) {
+            // Calculate new velocity by removing parallel component
+            Vec3d newVelocity = new Vec3d(
+                    currentVelocity.x - collisionResponseNormal.x * parallelComponent,
+                    currentVelocity.y - collisionResponseNormal.y * parallelComponent,
+                    currentVelocity.z - collisionResponseNormal.z * parallelComponent
             );
 
-            // Only remove the parallel component of velocity if moving into the surface
-            if (parallelComponent < 0) {
-                setVelocity(
-                        currentVelocity.x - collisionResponseNormal.x * parallelComponent,
-                        currentVelocity.y - collisionResponseNormal.y * parallelComponent,
-                        currentVelocity.z - collisionResponseNormal.z * parallelComponent
-                );
+            // Apply the new velocity
+            setVelocity(newVelocity.x, newVelocity.y, newVelocity.z);
+
+            // Debug log for velocity adjustment
+            if (self instanceof PlayerEntity) {
+                SLogger.log(this, String.format("Player velocity adjusted - Before: (%.4f, %.4f, %.4f), After: (%.4f, %.4f, %.4f)",
+                        currentVelocity.x, currentVelocity.y, currentVelocity.z,
+                        newVelocity.x, newVelocity.y, newVelocity.z));
             }
         }
 
-        // Still perform tryCheckInsideBlocks since we're cancelling part of move()
+        // Still perform collision checks for non-movement collisions (e.g., standing in lava)
         checkBlockCollision();
 
         // Cancel the vanilla velocity zeroing behavior
@@ -199,29 +251,67 @@ public abstract class MixinEntity implements ILoggingControl {
             return;
         }
 
-        // Get contacts from the physics system
-        List<Contact> contacts = engine.getEntityPhysicsManager().getContactDetector().getContactsForEntity(self);
+        EntityPhysicsManager manager = engine.getEntityPhysicsManager();
+        if (manager == null) {
+            return;
+        }
 
-        // If no contacts, nothing to do
+        // Force detect fresh contacts instead of using cached ones
+        List<Contact> contacts = manager.getContactDetector().detectContacts(self);
+
+        // Only proceed if we have contacts
         if (contacts.isEmpty()) {
             return;
         }
 
-        // Get the collision resolver
-        CollisionResolver resolver = engine.getEntityPhysicsManager().getCollisionResolver();
+        // DEBUG: Log contact information
+        if (self instanceof PlayerEntity) {
+            SLogger.log(this, String.format("Player has %d contacts after movement", contacts.size()));
+            for (int i = 0; i < contacts.size(); i++) {
+                Contact contact = contacts.get(i);
+                String contactType = contact.isGridContact() ? "grid" : "entity";
+                String normalStr = String.format("(%.2f, %.2f, %.2f)",
+                        contact.getContactNormal().x,
+                        contact.getContactNormal().y,
+                        contact.getContactNormal().z);
 
-        // Process post-movement collision with our physics system
-        engine.getEntityPhysicsManager().processPostMovement(self, movement, movement);
+                SLogger.log(this, String.format("Contact %d: type=%s, normal=%s, depth=%.4f",
+                        i, contactType, normalStr, contact.getPenetrationDepth()));
+            }
+        }
 
-        // Log collision resolution for debugging
-        if (self instanceof PlayerEntity && !contacts.isEmpty()) {
-            SLogger.log(this, "Applied collision resolution for player with " +
-                    contacts.size() + " contacts");
+        // Process post-movement collisions
+        manager.processPostMovement(self, movement, movement);
+
+        // Check if any contact would consider us on ground
+        boolean wasOnGround = self.isOnGround();
+        boolean nowOnGround = wasOnGround;
+
+        for (Contact contact : contacts) {
+            if (contact.isGroundContact()) {
+                nowOnGround = true;
+                break;
+            }
+        }
+
+        // Update ground state if needed
+        if (nowOnGround != wasOnGround) {
+            self.setOnGround(nowOnGround);
+
+            // Reset fall distance if we're now on ground
+            if (nowOnGround) {
+                self.fallDistance = 0;
+            }
+
+            if (self instanceof PlayerEntity) {
+                SLogger.log(this, "Player ground state changed: " + wasOnGround + " -> " + nowOnGround);
+            }
         }
     }
 
     /**
-     * Adjust movement vector to account for grid collisions.
+     * Improved version of adjustMovementForGridCollisions that better handles angled collisions.
+     * This fixes the "sliding acceleration" issue by carefully handling parallel components.
      */
     @Unique
     private Vec3d adjustMovementForGridCollisions(Entity entity, Vec3d movement, Box entityBox) {
@@ -245,8 +335,91 @@ public abstract class MixinEntity implements ILoggingControl {
         // Force track this entity if it's not already tracked
         manager.forceTrackEntity(entity);
 
+        // First check for existing contacts before the movement
+        // This is critical for handling penetrations and stationary grids
+        List<Contact> currentContacts = manager.getContactDetector().getContactsForEntity(entity);
+        boolean hasSignificantPenetration = false;
+        Contact deepestContact = null;
+
+        // Find the deepest contact with enough penetration to matter
+        for (Contact contact : currentContacts) {
+            if (contact.getPenetrationDepth() > 0.05f) {
+                hasSignificantPenetration = true;
+                if (deepestContact == null || contact.getPenetrationDepth() > deepestContact.getPenetrationDepth()) {
+                    deepestContact = contact;
+                }
+            }
+        }
+
+        // If we're already penetrating significantly, handle it specially
+        if (hasSignificantPenetration && deepestContact != null) {
+            boolean isPlayer = entity instanceof PlayerEntity;
+
+            // Get the penetration normal
+            Vector3f normal = deepestContact.getContactNormal();
+
+            // Calculate how much of our movement is going further into the penetration
+            Vector3d normalVec = new Vector3d(normal.x, normal.y, normal.z);
+            normalVec.normalize();
+
+            Vector3d movementVec = new Vector3d(movement.x, movement.y, movement.z);
+            double originalLength = movementVec.length();
+
+            double dot = movementVec.dot(normalVec);
+
+            // If we're moving further into the object, adjust the movement
+            if (dot < 0) {
+                // Create a separation vector to push us out of penetration
+                float separationDistance = deepestContact.getPenetrationDepth() * 1.1f; // Add 10% to ensure we're out
+                Vec3d separationVector = new Vec3d(
+                        normal.x * separationDistance,
+                        normal.y * separationDistance,
+                        normal.z * separationDistance
+                );
+
+                // Calculate the tangential component
+                Vector3d normalComponent = new Vector3d(normalVec);
+                normalComponent.mul(dot);
+
+                Vector3d tangentialComponent = new Vector3d(movementVec);
+                tangentialComponent.sub(normalComponent);
+
+                // Get tangential length
+                double tangentialLength = tangentialComponent.length();
+
+                // If there is a tangential component, properly scale it
+                if (tangentialLength > 0.0001) {
+                    // Normalize and scale to a fraction of the original movement magnitude
+                    // This prevents "speed boosts" in the tangential direction
+                    tangentialComponent.mul(Math.min(originalLength, tangentialLength) / tangentialLength);
+
+                    // Apply a friction factor for sliding
+                    tangentialComponent.mul(0.8);
+                }
+
+                // Convert adjusted movement back to Vec3d and combine with separation
+                Vec3d tangentialMovement = new Vec3d(tangentialComponent.x, tangentialComponent.y, tangentialComponent.z);
+                Vec3d combinedMovement = separationVector.add(tangentialMovement);
+
+                // Log the adjustment for debugging
+                if (isPlayer) {
+                    String contactType = deepestContact.isGridContact() ? "grid" : "entity";
+                    SLogger.log(this, String.format(
+                            "Player movement adjusted due to existing penetration with %s - depth=%.4f, normal=(%.2f, %.2f, %.2f), " +
+                                    "original=(%.4f, %.4f, %.4f), adjusted=(%.4f, %.4f, %.4f)",
+                            contactType,
+                            deepestContact.getPenetrationDepth(),
+                            normal.x, normal.y, normal.z,
+                            movement.x, movement.y, movement.z,
+                            combinedMovement.x, combinedMovement.y, combinedMovement.z));
+                }
+
+                return combinedMovement;
+            }
+        }
+
         // Perform sweep test to detect collision with grids
-        SweepResult result = manager.getContactDetector().convexSweepTest(
+        ContactDetector.SweepResult result = manager.getContactDetector().convexSweepTest(
                 entity, movement, manager.getEntityProxies());
 
         // If no collision detected, return original movement
@@ -254,31 +427,120 @@ public abstract class MixinEntity implements ILoggingControl {
             return movement;
         }
 
+        // Log collision detection for debugging
+        boolean isPlayer = entity instanceof PlayerEntity;
+        if (isPlayer) {
+            String hitType = result.getGrid() != null ? "grid" : "entity";
+            SLogger.log(this, String.format(
+                    "Player collided with %s at time %.4f, normal=(%.2f, %.2f, %.2f)",
+                    hitType,
+                    result.getTimeOfImpact(),
+                    result.getHitNormal().x,
+                    result.getHitNormal().y,
+                    result.getHitNormal().z));
+        }
+
         // Calculate safe movement (just before collision)
-        double safeTime = Math.max(0, result.getTimeOfImpact() - 0.001);
+        double safetyMargin = 0.01;
+        double safeTime = Math.max(0, result.getTimeOfImpact() - safetyMargin);
         Vec3d safeMovement = movement.multiply(safeTime);
 
         // Only if we still have significant movement remaining after safe movement
         double remainingTime = 1.0 - safeTime;
         if (remainingTime > 0.01) {
-            // Calculate deflected component for remaining movement (sliding)
-            Vec3d remainingMovement = movement.multiply(remainingTime);
-            Vec3d deflectedMovement = result.getDeflectedMovement(remainingMovement, (float) remainingTime);
+            // Get collision normal
+            Vector3f normal = result.getHitNormal();
 
-            // Combine safe movement with deflected remaining movement
-            return safeMovement.add(deflectedMovement);
+            // Convert to Vector3d for more precise math
+            Vector3d normalVec = new Vector3d(normal.x, normal.y, normal.z);
+            normalVec.normalize();
+
+            // Calculate remaining movement
+            Vec3d remainingMovement = movement.multiply(remainingTime);
+
+            // Convert to Vector3d
+            Vector3d remainingVec = new Vector3d(
+                    remainingMovement.x,
+                    remainingMovement.y,
+                    remainingMovement.z
+            );
+
+            // Calculate dot product
+            double dot = remainingVec.dot(normalVec);
+
+            // Only deflect if moving into the surface
+            Vec3d deflectedMovement;
+            if (dot < 0) {
+                // Remove normal component to get tangential component
+                Vector3d normalComponent = new Vector3d(normalVec);
+                normalComponent.mul(dot);
+
+                Vector3d tangentialComponent = new Vector3d(remainingVec);
+                tangentialComponent.sub(normalComponent);
+
+                // Calculate tangential length
+                double tangentialLength = tangentialComponent.length();
+
+                // If tangential component is negligible, no deflection
+                if (tangentialLength < 0.0001) {
+                    deflectedMovement = Vec3d.ZERO;
+                } else {
+                    // Normalize tangential component
+                    tangentialComponent.mul(1.0 / tangentialLength);
+
+                    // Scale to at most the magnitude of original tangential component
+                    // This is key to preventing speed boosts
+                    double deflectionMagnitude = Math.min(
+                            remainingMovement.length() * 0.8,  // 80% of remaining length
+                            tangentialLength                   // Original tangential length
+                    );
+
+                    tangentialComponent.mul(deflectionMagnitude);
+
+                    // Convert back to Vec3d
+                    deflectedMovement = new Vec3d(
+                            tangentialComponent.x,
+                            tangentialComponent.y,
+                            tangentialComponent.z
+                    );
+                }
+            } else {
+                // If not moving into surface, use remaining movement
+                deflectedMovement = remainingMovement;
+            }
+
+            // Combine safe movement with deflected movement
+            Vec3d combinedMovement = safeMovement.add(deflectedMovement);
+
+            if (isPlayer) {
+                SLogger.log(this, String.format(
+                        "Player pre-movement resolution - time=%.2f, safe=(%.2f, %.2f, %.2f), deflected=(%.2f, %.2f, %.2f), combined=(%.2f, %.2f, %.2f)",
+                        result.getTimeOfImpact(),
+                        safeMovement.x, safeMovement.y, safeMovement.z,
+                        deflectedMovement.x, deflectedMovement.y, deflectedMovement.z,
+                        combinedMovement.x, combinedMovement.y, combinedMovement.z));
+            }
+
+            return combinedMovement;
+        }
+
+        // If minimal remaining time, just use safe movement
+        if (isPlayer) {
+            SLogger.log(this, String.format(
+                    "Player using safe movement only: safe=%.2f, pos=(%.2f, %.2f, %.2f)",
+                    safeTime,
+                    safeMovement.x, safeMovement.y, safeMovement.z));
         }
 
         return safeMovement;
     }
 
     /**
-     * Instead of injecting at isOnGround directly, we'll check a field or method
-     * that determines ground state to avoid recursive calls.
+     * Check if the entity should be considered on ground based on grid contacts.
      */
     @Inject(
             method = "move",
-            at = @At("RETURN")
+            at = @At(value = "RETURN")
     )
     private void checkGridGroundState(MovementType type, Vec3d movement, CallbackInfo ci) {
         Entity self = (Entity)(Object)this;
@@ -294,29 +556,44 @@ public abstract class MixinEntity implements ILoggingControl {
             return;
         }
 
-        // Get contacts from the physics system
-        List<Contact> contacts = engine.getEntityPhysicsManager().getContactDetector().getContactsForEntity(self);
+        // Get contacts from the physics system - use fresh detection
+        List<Contact> contacts = engine.getEntityPhysicsManager().getContactDetector().detectContacts(self);
+
+        // Skip if no contacts
+        if (contacts.isEmpty()) {
+            return;
+        }
 
         boolean isOnGrid = false;
+        boolean isPlayer = self instanceof PlayerEntity;
+        float bestGroundNormal = 0f;
 
         // Check if any contacts indicate the entity is on a grid
         for (Contact contact : contacts) {
             if (contact.isGridContact()) {
                 Vector3f normal = contact.getContactNormal();
-                float depth = contact.getPenetrationDepth();
-
-                // If normal points up significantly and has sufficient contact depth
-                if (normal.y > 0.7071f && depth > 0.001f) {
+                // A normal with Y>0.7 is considered ground (less than 45 degrees from vertical)
+                if (normal.y > 0.7f && contact.getPenetrationDepth() > 0.01f) {
                     isOnGrid = true;
-                    break;
+                    bestGroundNormal = Math.max(bestGroundNormal, normal.y);
                 }
             }
         }
 
         // If the entity is on a grid, directly set the onGround field
         if (isOnGrid) {
+            // Force set using field
             self.setOnGround(true);
+
+            // Reset fall distance
             self.fallDistance = 0;
+
+            // Log for debugging
+            if (isPlayer) {
+                SLogger.log(this, String.format(
+                        "Player is now on grid ground - normal.y=%.2f",
+                        bestGroundNormal));
+            }
         }
     }
 

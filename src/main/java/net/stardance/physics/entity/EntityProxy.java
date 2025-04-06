@@ -10,6 +10,7 @@ import com.bulletphysics.linearmath.DefaultMotionState;
 import com.bulletphysics.linearmath.MotionState;
 import com.bulletphysics.linearmath.Transform;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.stardance.Stardance;
@@ -28,6 +29,9 @@ import java.util.List;
  * Acts as a proxy between Minecraft entities and jBullet physics objects.
  */
 public class EntityProxy implements ILoggingControl {
+
+    // Enable debug logging
+    private static final boolean DEBUG_PROXY = true;
 
     // DynamicsWorld
     private final DynamicsWorld dynamicsWorld;
@@ -50,6 +54,9 @@ public class EntityProxy implements ILoggingControl {
 
     // Contact tracking
     private final List<Contact> currentContacts = new ArrayList<>();
+
+    // Update tracking
+    private long lastUpdateTime = 0;
 
     /**
      * Creates a new EntityProxy for the specified entity.
@@ -87,7 +94,7 @@ public class EntityProxy implements ILoggingControl {
                         CollisionFlags.KINEMATIC_OBJECT |
                         CollisionFlags.CUSTOM_MATERIAL_CALLBACK |
                         CollisionFlags.NO_CONTACT_RESPONSE
-                );
+        );
 
         // Store reference to this proxy in the user pointer
         rigidBody.setUserPointer(this);
@@ -96,6 +103,10 @@ public class EntityProxy implements ILoggingControl {
         rigidBody.activate(true);
 
         this.dynamicsWorld = Stardance.engineManager.getEngine(entity.getWorld()).getDynamicsWorld();
+
+        if (DEBUG_PROXY && entity instanceof PlayerEntity) {
+            SLogger.log(this, "Created proxy for player: " + entity.getEntityName());
+        }
     }
 
     /**
@@ -105,10 +116,15 @@ public class EntityProxy implements ILoggingControl {
      * @param entity The entity to update from
      */
     public void updateFromEntity(Entity entity) {
-        if (!isActive){
+        if (!isActive) {
             isActive = true;
             dynamicsWorld.addCollisionObject(rigidBody);
+
+            if (DEBUG_PROXY && entity instanceof PlayerEntity) {
+                SLogger.log(this, "Reactivated proxy for player: " + entity.getEntityName());
+            }
         }
+
         // Check if bounding box has changed
         Box currentBoundingBox = entity.getBoundingBox();
         boolean boundingBoxChanged = !currentBoundingBox.equals(lastBoundingBox);
@@ -126,11 +142,35 @@ public class EntityProxy implements ILoggingControl {
         // If bounding box changed, update collision shape
         if (boundingBoxChanged) {
             updateCollisionShape(entity);
+
+            // Log bounding box change for players
+            if (DEBUG_PROXY && entity instanceof PlayerEntity) {
+                Vec3d oldSize = new Vec3d(
+                        lastBoundingBox.getXLength(),
+                        lastBoundingBox.getYLength(),
+                        lastBoundingBox.getZLength()
+                );
+
+                Vec3d newSize = new Vec3d(
+                        currentBoundingBox.getXLength(),
+                        currentBoundingBox.getYLength(),
+                        currentBoundingBox.getZLength()
+                );
+
+                SLogger.log(this, String.format(
+                        "Player bounding box changed - old size=(%.2f, %.2f, %.2f), new size=(%.2f, %.2f, %.2f)",
+                        oldSize.x, oldSize.y, oldSize.z,
+                        newSize.x, newSize.y, newSize.z));
+            }
+
             lastBoundingBox = currentBoundingBox;
         }
 
         // Always keep the rigid body active since we're constantly updating it
         rigidBody.activate(true);
+
+        // Update tracking
+        lastUpdateTime = entity.getWorld().getTime();
     }
 
     /**
@@ -174,7 +214,9 @@ public class EntityProxy implements ILoggingControl {
         // 3. Update inertia and other properties
 
         // For now, we'll just log
-        SLogger.log(this, "Entity bounding box changed for " + entity);
+        if (DEBUG_PROXY && entity instanceof PlayerEntity) {
+            SLogger.log(this, "Entity collision shape updated for player: " + entity.getEntityName());
+        }
     }
 
     /**
@@ -187,6 +229,9 @@ public class EntityProxy implements ILoggingControl {
         isActive = false;
         currentContacts.clear();
 
+        if (DEBUG_PROXY && entity instanceof PlayerEntity) {
+            SLogger.log(this, "Disposed proxy for player: " + entity.getEntityName());
+        }
     }
 
     /**
@@ -222,6 +267,22 @@ public class EntityProxy implements ILoggingControl {
      */
     public Entity getEntity() {
         return entity;
+    }
+
+    /**
+     * Gets the last known bounding box.
+     * Used to detect when bounding box changes.
+     */
+    public Box getLastBoundingBox() {
+        return lastBoundingBox;
+    }
+
+    /**
+     * Gets the last update time.
+     * Used to determine when proxy was last updated.
+     */
+    public long getLastUpdateTime() {
+        return lastUpdateTime;
     }
 
     /**
@@ -310,6 +371,6 @@ public class EntityProxy implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return false;
+        return true; // Enable console logging for debugging
     }
 }
