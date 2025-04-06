@@ -2,208 +2,219 @@ package net.stardance.physics.entity;
 
 import com.bulletphysics.collision.dispatch.CollisionFlags;
 import com.bulletphysics.collision.dispatch.CollisionObject;
-import com.bulletphysics.collision.dispatch.PairCachingGhostObject;
-import com.bulletphysics.collision.shapes.BoxShape;
 import com.bulletphysics.collision.shapes.CollisionShape;
 import com.bulletphysics.dynamics.DynamicsWorld;
+import com.bulletphysics.dynamics.RigidBody;
+import com.bulletphysics.dynamics.RigidBodyConstructionInfo;
+import com.bulletphysics.linearmath.DefaultMotionState;
+import com.bulletphysics.linearmath.MotionState;
 import com.bulletphysics.linearmath.Transform;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.math.Box;
-import net.stardance.utils.SLogger;
+import net.minecraft.util.math.Vec3d;
+import net.stardance.Stardance;
+import net.stardance.physics.EngineManager;
 import net.stardance.utils.ILoggingControl;
+import net.stardance.utils.SLogger;
 
+import javax.vecmath.Matrix4f;
+import javax.vecmath.Quat4f;
 import javax.vecmath.Vector3f;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Represents an entity in the physics world.
- * Creates and manages a ghost object that tracks the entity's position
- * but doesn't respond to physics forces.
+ * Represents an entity in the physics system.
+ * Acts as a proxy between Minecraft entities and jBullet physics objects.
  */
 public class EntityProxy implements ILoggingControl {
 
-    // Core references
-    private final Entity entity;
+    // DynamicsWorld
     private final DynamicsWorld dynamicsWorld;
 
+    // Constants
+    private static final float DEFAULT_MASS = 5.0f; // Zero mass = kinematic object
+    private static final float COLLISION_MARGIN = 0.02f; // Small margin to prevent "sticky" collisions
+
+    // Entity reference
+    private final Entity entity;
+
     // Physics objects
-    private final PairCachingGhostObject ghostObject;
-    private CollisionShape shape;
+    private CollisionShape collisionShape;
+    private final MotionState motionState;
+    private final RigidBody rigidBody;
 
-    // Tracking state
-    private Box previousAABB;
-    private boolean isActive = false;
+    // State tracking
+    private boolean isActive = true;
+    private Box lastBoundingBox;
 
-    // Filter groups for collision
-    public static final short ENTITY_GROUP = 11; // Default entity collision group
-    public static final short ENTITY_MASK = 1;   // Default collision mask (grid objects)
-
-    /**
-     * Creates a new EntityProxy for the given entity.
-     *
-     * @param entity The Minecraft entity to proxy
-     * @param dynamicsWorld The physics world to add the proxy to
-     */
-    public EntityProxy(Entity entity, DynamicsWorld dynamicsWorld) {
-        this(entity, dynamicsWorld, ENTITY_GROUP, ENTITY_MASK);
-    }
+    // Contact tracking
+    private final List<Contact> currentContacts = new ArrayList<>();
 
     /**
-     * Creates a new EntityProxy with custom collision filtering.
+     * Creates a new EntityProxy for the specified entity.
      *
      * @param entity The Minecraft entity to proxy
-     * @param dynamicsWorld The physics world to add the proxy to
-     * @param collisionGroup The collision group this entity belongs to
-     * @param collisionMask The collision mask defining what this entity collides with
+     * @param collisionShape The bullet physics collision shape for this entity
      */
-    public EntityProxy(Entity entity, DynamicsWorld dynamicsWorld,
-                       short collisionGroup, short collisionMask) {
+    public EntityProxy(Entity entity, CollisionShape collisionShape) {
         this.entity = entity;
-        this.dynamicsWorld = dynamicsWorld;
+        this.collisionShape = collisionShape;
+        this.lastBoundingBox = entity.getBoundingBox();
 
-        // Create the ghost object
-        this.ghostObject = new PairCachingGhostObject();
+        // Configure shape properties
+        this.collisionShape.setMargin(COLLISION_MARGIN);
 
-        // Set collision flags - NO_CONTACT_RESPONSE means it won't push things
-        ghostObject.setCollisionFlags(
-                CollisionFlags.NO_CONTACT_RESPONSE |
+        // Create initial transform
+        Transform startTransform = new Transform();
+        startTransform.setIdentity();
+        updateTransformFromEntity(startTransform, entity);
+
+        // Create motion state
+        this.motionState = new DefaultMotionState(startTransform);
+
+        // Calculate inertia (not used for kinematic objects, but required)
+        Vector3f inertia = new Vector3f(0, 0, 0);
+
+        // Create rigid body
+        RigidBodyConstructionInfo rbInfo = new RigidBodyConstructionInfo(
+                DEFAULT_MASS, motionState, collisionShape, inertia);
+        this.rigidBody = new RigidBody(rbInfo);
+
+        // Configure as kinematic body (moved by code, not physics)
+        rigidBody.setCollisionFlags(
+                rigidBody.getCollisionFlags() |
+                        CollisionFlags.KINEMATIC_OBJECT |
                         CollisionFlags.CUSTOM_MATERIAL_CALLBACK |
-                        CollisionFlags.KINEMATIC_OBJECT  // Add this flag
-        );
+                        CollisionFlags.NO_CONTACT_RESPONSE
+                );
 
-        // Store reference to entity for collision callbacks
-        ghostObject.setUserPointer(entity);
+        // Store reference to this proxy in the user pointer
+        rigidBody.setUserPointer(this);
 
-        // Initial setup
-        updateShape();
-        updatePosition();
+        // Activate the rigid body initially
+        rigidBody.activate(true);
 
-        // Add to physics world with custom filtering
-        dynamicsWorld.addCollisionObject(ghostObject, collisionGroup, collisionMask);
-        isActive = true;
-
-        SLogger.log(this, "Created entity proxy for: " + entity.getUuid() +
-                " (group=" + collisionGroup + ", mask=" + collisionMask + ")");
+        this.dynamicsWorld = Stardance.engineManager.getEngine(entity.getWorld()).getDynamicsWorld();
     }
 
     /**
-     * Sets a custom collision shape for this proxy.
+     * Updates the proxy's physics state from the entity's current state.
+     * Called each tick to synchronize the proxy with the entity.
+     *
+     * @param entity The entity to update from
      */
-    public void setCollisionShape(CollisionShape shape) {
-        if (shape != null) {
-            this.shape = shape;
-            ghostObject.setCollisionShape(shape);
-            SLogger.log(this, "Set custom shape for entity: " + entity.getUuid());
+    public void updateFromEntity(Entity entity) {
+        if (!isActive){
+            isActive = true;
+            dynamicsWorld.addCollisionObject(rigidBody);
         }
-    }
+        // Check if bounding box has changed
+        Box currentBoundingBox = entity.getBoundingBox();
+        boolean boundingBoxChanged = !currentBoundingBox.equals(lastBoundingBox);
 
-    /**
-     * Updates the proxy's position and shape.
-     * Called each tick to keep the proxy in sync with the entity.
-     */
-    public void update() {
-        if (!isActive) return;
+        // Update transform from entity position
+        Transform worldTransform = new Transform();
+        rigidBody.getWorldTransform(worldTransform);
 
-        // Check if shape needs updating (entity size changed)
-        if (hasEntitySizeChanged()) {
-            updateShape();
-        }
+        updateTransformFromEntity(worldTransform, entity);
 
-        // Always update position
-        updatePosition();
-    }
+        // Update motion state with new transform
+        motionState.setWorldTransform(worldTransform);
+        rigidBody.setWorldTransform(worldTransform);
 
-    /**
-     * Checks if the entity's size has changed since last update.
-     */
-    private boolean hasEntitySizeChanged() {
-        Box currentBox = entity.getBoundingBox();
-
-        if (previousAABB == null) {
-            previousAABB = currentBox;
-            return true;
+        // If bounding box changed, update collision shape
+        if (boundingBoxChanged) {
+            updateCollisionShape(entity);
+            lastBoundingBox = currentBoundingBox;
         }
 
-        // Check if dimensions have changed significantly
-        double epsilon = 0.01;
-        boolean changed =
-                Math.abs((currentBox.maxX - currentBox.minX) - (previousAABB.maxX - previousAABB.minX)) > epsilon ||
-                        Math.abs((currentBox.maxY - currentBox.minY) - (previousAABB.maxY - previousAABB.minY)) > epsilon ||
-                        Math.abs((currentBox.maxZ - currentBox.minZ) - (previousAABB.maxZ - previousAABB.minZ)) > epsilon;
-
-        if (changed) {
-            previousAABB = currentBox;
-        }
-
-        return changed;
+        // Always keep the rigid body active since we're constantly updating it
+        rigidBody.activate(true);
     }
 
     /**
-     * Updates the collision shape based on entity dimensions.
+     * Updates the transform from entity position and rotation.
+     *
+     * @param transform The transform to update
+     * @param entity The entity to get position and rotation from
      */
-    private void updateShape() {
-        Box entityBox = entity.getBoundingBox();
+    private void updateTransformFromEntity(Transform transform, Entity entity) {
+        // Set position to center of entity's bounding box
+        Box box = entity.getBoundingBox();
+        float x = (float)((box.minX + box.maxX) * 0.5);
+        float y = (float)((box.minY + box.maxY) * 0.5);
+        float z = (float)((box.minZ + box.maxZ) * 0.5);
 
-        // Calculate half extents (from center to edge)
-        float width = (float) ((entityBox.maxX - entityBox.minX) * 0.5f);
-        float height = (float) ((entityBox.maxY - entityBox.minY) * 0.5f);
-        float depth = (float) ((entityBox.maxZ - entityBox.minZ) * 0.5f);
+        transform.origin.set(x, y, z);
 
-        // Create new box shape
-        BoxShape newShape = new BoxShape(new Vector3f(width, height, depth));
+        // Set rotation based on entity's yaw
+        // Convert Minecraft's yaw (degrees) to radians
+        float yawRadians = (float)Math.toRadians(-entity.getYaw());
 
-        // Set small margin to prevent falling through cracks
-        newShape.setMargin(0.04f);
-
-        // Update the shape
-        ghostObject.setCollisionShape(newShape);
-
-        // Store the new shape
-        if (shape != null) {
-            // In a real implementation, you might need to clean up the old shape
-        }
-        shape = newShape;
-
-        SLogger.log(this, "Updated shape for entity: " + entity.getUuid() +
-                ", dimensions: " + width + "x" + height + "x" + depth);
+        // Create rotation matrix around Y axis
+        Quat4f rotation = new Quat4f();
+        rotation.set(new javax.vecmath.AxisAngle4f(0, 1, 0, yawRadians));
+        transform.setRotation(rotation);
     }
 
     /**
-     * Updates the proxy's position to match the entity.
+     * Updates the collision shape based on the entity's current bounding box.
+     *
+     * @param entity The entity to update from
      */
-    private void updatePosition() {
-        Box entityBox = entity.getBoundingBox();
+    private void updateCollisionShape(Entity entity) {
+        // This would be replaced by proper collision shape handling
+        // For now, we assume the shape factory handles this
+        // and the shape itself can be updated directly
 
-        // Calculate center of bounding box
-        float centerX = (float) (entityBox.minX + entityBox.maxX) * 0.5f;
-        float centerY = (float) (entityBox.minY + entityBox.maxY) * 0.5f;
-        float centerZ = (float) (entityBox.minZ + entityBox.maxZ) * 0.5f;
+        // In a real implementation, we might need to:
+        // 1. Get a new shape from a shape factory
+        // 2. Update the rigid body with the new shape
+        // 3. Update inertia and other properties
 
-        // Update transform
-        Transform transform = new Transform();
-        transform.setIdentity();
-        transform.origin.set(centerX, centerY, centerZ);
-
-        // Apply to ghost object
-        ghostObject.setWorldTransform(transform);
+        // For now, we'll just log
+        SLogger.log(this, "Entity bounding box changed for " + entity);
     }
 
     /**
-     * Removes this proxy from the physics world.
-     * Should be called when the entity is no longer needed.
+     * Performs a cleanup when the proxy is no longer needed.
+     * Should be called before discarding the proxy.
      */
-    public void remove() {
-        if (isActive) {
-            dynamicsWorld.removeCollisionObject(ghostObject);
-            isActive = false;
-            SLogger.log(this, "Removed entity proxy for: " + entity.getUuid());
-        }
+    public void dispose() {
+        dynamicsWorld.removeCollisionObject(rigidBody);
+        // Clean up resources if needed
+        isActive = false;
+        currentContacts.clear();
+
     }
 
     /**
-     * Gets the underlying collision object.
+     * Checks if the proxy is still active.
+     */
+    public boolean isActive() {
+        return isActive;
+    }
+
+    /**
+     * Gets the rigid body for this proxy.
+     */
+    public RigidBody getRigidBody() {
+        return rigidBody;
+    }
+
+    /**
+     * Gets the collision object for this proxy.
      */
     public CollisionObject getCollisionObject() {
-        return ghostObject;
+        return rigidBody;
+    }
+
+    /**
+     * Gets the collision shape for this proxy.
+     */
+    public CollisionShape getCollisionShape() {
+        return collisionShape;
     }
 
     /**
@@ -214,10 +225,82 @@ public class EntityProxy implements ILoggingControl {
     }
 
     /**
-     * Checks if this proxy is active in the physics world.
+     * Adds a contact to this proxy's list of current contacts.
+     *
+     * @param contact The contact to add
      */
-    public boolean isActive() {
-        return isActive;
+    public void addContact(Contact contact) {
+        currentContacts.add(contact);
+    }
+
+    /**
+     * Clears all contacts from this proxy.
+     */
+    public void clearContacts() {
+        currentContacts.clear();
+    }
+
+    /**
+     * Gets all current contacts for this entity.
+     */
+    public List<Contact> getContacts() {
+        return new ArrayList<>(currentContacts);
+    }
+
+    /**
+     * Gets the center of the entity in world space.
+     */
+    public Vec3d getCenter() {
+        Box box = entity.getBoundingBox();
+        return new Vec3d(
+                (box.minX + box.maxX) * 0.5,
+                (box.minY + box.maxY) * 0.5,
+                (box.minZ + box.maxZ) * 0.5
+        );
+    }
+
+    /**
+     * Gets the half-extents of the entity bounding box.
+     */
+    public Vector3f getHalfExtents() {
+        Box box = entity.getBoundingBox();
+        return new Vector3f(
+                (float)((box.maxX - box.minX) * 0.5),
+                (float)((box.maxY - box.minY) * 0.5),
+                (float)((box.maxZ - box.minZ) * 0.5)
+        );
+    }
+
+    /**
+     * Gets the minimum AABB point.
+     */
+    public Vector3f getMinimum() {
+        Box box = entity.getBoundingBox();
+        return new Vector3f(
+                (float)box.minX,
+                (float)box.minY,
+                (float)box.minZ
+        );
+    }
+
+    /**
+     * Gets the maximum AABB point.
+     */
+    public Vector3f getMaximum() {
+        Box box = entity.getBoundingBox();
+        return new Vector3f(
+                (float)box.maxX,
+                (float)box.maxY,
+                (float)box.maxZ
+        );
+    }
+
+    @Override
+    public String toString() {
+        return "EntityProxy{" +
+                "entity=" + entity.getType().getName().getString() +
+                ", active=" + isActive +
+                '}';
     }
 
     @Override
@@ -227,6 +310,6 @@ public class EntityProxy implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true;
+        return false;
     }
 }

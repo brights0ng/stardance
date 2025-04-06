@@ -24,6 +24,7 @@ Physics objects are structured in "LocalGrids", made of vanilla (or modded) Mine
     - Entity collision bugs out when colliding with multiple collision shapes
 - RENDER:
     - Grids renders jump when a new block is placed
+    - Grids are rendered in shadow incorrectly
 - PHYSICS:
     - Physics objects will trip over mesh triangle edges when moving parallel to them, causing visual oddity
 ### Planned features:

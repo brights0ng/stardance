@@ -1,201 +1,447 @@
 package net.stardance.physics.entity;
 
-import net.minecraft.block.BlockState;
 import net.minecraft.entity.Entity;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.shape.VoxelShape;
 import net.stardance.core.LocalGrid;
+import net.stardance.physics.entity.ContactDetector.SweepResult;
 import net.stardance.utils.ILoggingControl;
 import net.stardance.utils.SLogger;
 
+import javax.vecmath.Vector2f;
+import javax.vecmath.Vector3d;
 import javax.vecmath.Vector3f;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 /**
- * Handles collision resolution for entities.
- * Implements realistic sliding mechanics and ground detection.
+ * Resolves collisions between entities and physics objects.
+ * Handles both pre-movement collision avoidance and post-movement position correction.
  */
 public class CollisionResolver implements ILoggingControl {
+    // Constants
+    private static final float POSITION_CORRECTION_FACTOR = 0.8f;
+    private static final float MINIMUM_CORRECTION_MAGNITUDE = 0.005f;
+    private static final float MAXIMUM_CORRECTION_MAGNITUDE = 0.5f;
+    private static final float GROUND_NORMAL_Y_THRESHOLD = 0.7071f; // cos(45 degrees)
+    private static final float SLIDE_FRICTION = 0.92f; // Friction factor for sliding
+    private static final float GROUND_FRICTION = 0.6f; // Friction factor when on ground
 
-    // Constants for physics behavior adjustment
-    private static final float PENETRATION_CORRECTION_FACTOR = -1.0f;  // How aggressively to correct penetration
-    private static final float GROUND_NORMAL_THRESHOLD = 0.7071f;     // cos(45°) - normals with y above this are ground
-    private static final float MIN_GROUND_CONTACT_DEPTH = 0.001f;     // Minimum penetration to count as ground
-    private static final float EPSILON = 0.0001f;                     // Small value for float comparisons
+    // Reference to parent
+    private final EntityPhysicsManager entityPhysicsManager;
 
     /**
-     * Applies gentle position correction to prevent entity penetration into grids.
-     * Uses the minimum displacement needed to resolve penetration while ensuring
-     * the entity doesn't clip into world blocks.
+     * Creates a new CollisionResolver.
      *
-     * @param entity Entity to adjust
-     * @param contacts List of contacts for the entity
+     * @param entityPhysicsManager The parent EntityPhysicsManager
      */
-    public void applyGentlePositionCorrection(Entity entity, List<Contact> contacts) {
+    public CollisionResolver(EntityPhysicsManager entityPhysicsManager) {
+        this.entityPhysicsManager = entityPhysicsManager;
+        SLogger.log(this, "CollisionResolver initialized");
+    }
+
+    /**
+     * Resolves a pre-movement collision by calculating a safe movement path.
+     * Called before entity movement occurs to prevent collisions.
+     *
+     * @param entity The entity to move
+     * @param movement The proposed movement vector
+     * @param result The sweep test result with collision information
+     * @return A modified movement vector that avoids the collision
+     */
+    public Vec3d resolvePreMovementCollision(Entity entity, Vec3d movement, SweepResult result) {
+        // Special case: if the time of impact is very small, entity may be already colliding
+        if (result.getTimeOfImpact() < 0.01f) {
+            // Try to push the entity out of the collision
+            return resolvePenetration(entity, movement, result);
+        }
+
+        // Calculate safe movement up to collision point with safety margin
+        double safetyMargin = 0.01;
+        Vec3d safeMovement = result.getSafePosition(Vec3d.ZERO, movement, safetyMargin);
+
+        // Calculate remaining time after collision
+        float remainingTime = 1.0f - result.getTimeOfImpact();
+
+        // If most of the movement is complete or no time remains, just return safe movement
+        if (remainingTime < 0.01f) {
+            return safeMovement;
+        }
+
+        // Get sliding movement for the remainder of the time
+        Vec3d slidingMovement = calculateSlidingMovement(movement, result, remainingTime);
+
+        // Combine safe movement and sliding movement
+        return safeMovement.add(slidingMovement);
+    }
+
+    /**
+     * Resolves a penetration by calculating a push-out vector.
+     * Used when an entity is already colliding at the start of movement.
+     *
+     * @param entity The entity to correct
+     * @param movement The proposed movement vector
+     * @param result The sweep test result with collision information
+     * @return A modified movement vector that resolves the penetration
+     */
+    private Vec3d resolvePenetration(Entity entity, Vec3d movement, SweepResult result) {
+        // Get collision normal
+        Vector3f normal = result.getHitNormal();
+
+        // Create separation vector along normal
+        float separationDistance = 0.05f; // Push out slightly more to avoid sticking
+        Vec3d separationVector = new Vec3d(
+                normal.x * separationDistance,
+                normal.y * separationDistance,
+                normal.z * separationDistance
+        );
+
+        // Project original movement onto the separation plane
+        Vector3d movementVec = new Vector3d(movement.x, movement.y, movement.z);
+        Vector3d normalVec = new Vector3d(normal.x, normal.y, normal.z);
+
+        // Calculate dot product
+        double dot = movementVec.dot(normalVec);
+
+        // Only project if moving into the surface
+        Vec3d projectedMovement = movement;
+        if (dot < 0) {
+            // Remove normal component from movement
+            Vector3d normalComponent = new Vector3d(normalVec);
+            normalComponent.scale(dot);
+            movementVec.sub(normalComponent);
+
+            // Convert back to Vec3d
+            projectedMovement = new Vec3d(movementVec.x, movementVec.y, movementVec.z);
+        }
+
+        // Scale projected movement to avoid overshooting
+        projectedMovement = projectedMovement.multiply(0.8); // Reduce speed slightly
+
+        // Combine separation and projected movement
+        return separationVector.add(projectedMovement);
+    }
+
+    /**
+     * Calculates a sliding movement along a surface.
+     * Used for the remaining movement after a collision.
+     *
+     * @param originalMovement Original movement vector
+     * @param result Sweep test result with collision information
+     * @param remainingTime Fraction of original movement time remaining
+     * @return A sliding movement vector
+     */
+    private Vec3d calculateSlidingMovement(Vec3d originalMovement, SweepResult result, float remainingTime) {
+        // Get the collision normal
+        Vector3f normal = result.getHitNormal();
+
+        // Convert to Vector3d for more precise math
+        Vector3d movementVec = new Vector3d(
+                originalMovement.x,
+                originalMovement.y,
+                originalMovement.z
+        );
+
+        Vector3d normalVec = new Vector3d(normal.x, normal.y, normal.z);
+        normalVec.normalize();
+
+        // Calculate dot product to get component along normal
+        double dot = movementVec.dot(normalVec);
+
+        // Only project if moving into the surface
+        if (dot < 0) {
+            // Calculate the rejected (perpendicular) component
+            Vector3d parallelComponent = new Vector3d(normalVec);
+            parallelComponent.scale(dot);
+
+            // Remove parallel component to get perpendicular component
+            Vector3d perpendicularComponent = new Vector3d(movementVec);
+            perpendicularComponent.sub(parallelComponent);
+
+            // Apply friction to sliding
+            perpendicularComponent.scale(SLIDE_FRICTION);
+
+            // Scale by remaining time
+            perpendicularComponent.scale(remainingTime);
+
+            // Make sure we're moving a significant amount
+            if (perpendicularComponent.lengthSquared() < 1e-6) {
+                return Vec3d.ZERO;
+            }
+
+            // Convert back to Vec3d
+            return new Vec3d(
+                    perpendicularComponent.x,
+                    perpendicularComponent.y,
+                    perpendicularComponent.z
+            );
+        }
+
+        // If not moving into surface, allow full movement
+        return originalMovement.multiply(remainingTime);
+    }
+
+    /**
+     * Resolves post-movement collisions by adjusting entity position and velocity.
+     * Called after entity movement to resolve any remaining penetrations.
+     *
+     * @param entity The entity that moved
+     * @param contacts List of contacts detected after movement
+     */
+    public void resolvePostMovementCollision(Entity entity, List<Contact> contacts) {
         if (contacts.isEmpty()) {
             return;
         }
 
-        // Find grid contacts only
-        List<Contact> gridContacts = new ArrayList<>();
-        for (Contact contact : contacts) {
-            if (contact.isGridContact()) {
-                gridContacts.add(contact);
+        // Sort contacts by penetration depth (deepest first)
+        List<Contact> sortedContacts = new ArrayList<>(contacts);
+        sortedContacts.sort(Comparator.comparing(Contact::getPenetrationDepth).reversed());
+
+        // Process each contact
+        for (Contact contact : sortedContacts) {
+            // Skip if entity is dead or removed
+            if (!entity.isAlive()) {
+                return;
+            }
+
+            // Handle position correction
+            handlePositionCorrection(entity, contact);
+
+            // Handle velocity adjustment
+            handleVelocityAdjustment(entity, contact);
+
+            // Handle ground state
+            if (contact.isGroundContact()) {
+                setEntityOnGround(entity);
+
+                // Apply ground friction to horizontal velocity
+                applyGroundFriction(entity);
             }
         }
+    }
 
-        if (gridContacts.isEmpty()) {
+    /**
+     * Corrects entity position to resolve penetration.
+     *
+     * @param entity The entity to correct
+     * @param contact The contact information
+     */
+    private void handlePositionCorrection(Entity entity, Contact contact) {
+        // Skip if penetration is too small
+        if (contact.getPenetrationDepth() < MINIMUM_CORRECTION_MAGNITUDE) {
             return;
         }
 
-        // Check if any contact indicates the entity is standing on a grid
-        boolean standingOnGrid = false;
-        for (Contact contact : gridContacts) {
-            Vector3f normal = contact.getContactNormal();
-            // Normal points up significantly
-            if (normal.y > 0.7071f) {
-                standingOnGrid = true;
-                break;
-            }
-        }
+        // Calculate correction magnitude
+        float correction = Math.min(
+                contact.getPenetrationDepth() * POSITION_CORRECTION_FACTOR,
+                MAXIMUM_CORRECTION_MAGNITUDE
+        );
 
-        // Calculate correction vector
-        Vector3f correctionVec = new Vector3f(0, 0, 0);
+        // Create correction vector along normal
+        Vector3f normal = contact.getContactNormal();
+        Vector3f correctionVec = new Vector3f(normal);
+        correctionVec.scale(correction);
 
-        for (Contact contact : gridContacts) {
-            // Skip contacts with insufficient penetration
-            if (contact.getPenetrationDepth() < MIN_GROUND_CONTACT_DEPTH) {
-                continue;
-            }
+        // Apply correction to entity position
+        Vec3d correctionVecMC = new Vec3d(correctionVec.x, correctionVec.y, correctionVec.z);
+        Vec3d newPos = entity.getPos().add(correctionVecMC);
 
-            // Get the contact normal and penetration depth
-            Vector3f normal = contact.getContactNormal();
-            float depth = contact.getPenetrationDepth();
+        // Ensure new position doesn't collide with world blocks
+        newPos = ensureSafePosition(entity, entity.getPos(), newPos);
 
-            // If standing on grid, reduce horizontal correction significantly to prevent ejection
-            if (standingOnGrid && normal.y < 0.7071f) {
-                depth *= 1f; // Reduce horizontal correction when standing on grid
-            }
-
-            // Scale normal by depth to get this contact's correction
-            Vector3f contactCorrection = new Vector3f(normal);
-            contactCorrection.scale(depth);
-
-            // Add to total correction
-            correctionVec.add(contactCorrection);
-        }
-
-        // Scale correction to avoid overshooting
-        correctionVec.scale(PENETRATION_CORRECTION_FACTOR);
-
-//        // Eliminate any downward movement component
-//        if (correctionVec.y < 0) {
-//            correctionVec.y = 0;
-//        }
-
-        // Apply correction if significant
-        if (correctionVec.lengthSquared() > EPSILON) {
-            // Convert to Vec3d
-            Vec3d correction = new Vec3d(
-                    correctionVec.x,
-                    correctionVec.y,
-                    correctionVec.z
-            );
-
-            // Check if the correction would push the entity into world blocks
-            if (!isMovementSafe(entity, correction)) {
-                // If unsafe, try horizontal movement only
-                Vec3d horizontalCorrection = new Vec3d(correction.x, 0, correction.z);
-                if (!isMovementSafe(entity, horizontalCorrection)) {
-                    // If still unsafe, try minimal corrections along each axis
-                    correction = findSafeCorrection(entity, correction);
-                } else {
-                    correction = horizontalCorrection;
-                }
-            }
-
-            // Apply position correction if we found a safe movement
-            if (correction.lengthSquared() > EPSILON) {
-                entity.setPos(
-                        entity.getX() + correction.x,
-                        entity.getY() + correction.y,
-                        entity.getZ() + correction.z
-                );
-
-                SLogger.log(this, "Applied position correction: " + correction + " to entity: " + entity.getUuid());
-            }
-        }
+        // Update entity position
+        entity.setPosition(newPos);
     }
 
     /**
-     * Checks if a proposed movement would result in the entity colliding with world blocks.
+     * Ensures a new position doesn't cause collisions with world blocks.
      *
      * @param entity The entity to check
-     * @param movement The proposed movement vector
-     * @return True if the movement is safe (no world block collisions), false otherwise
+     * @param oldPos The old position
+     * @param newPos The proposed new position
+     * @return A safe position
      */
-    private boolean isMovementSafe(Entity entity, Vec3d movement) {
-        // If no movement, it's safe
-        if (movement.lengthSquared() < EPSILON) {
-            return true;
+    private Vec3d ensureSafePosition(Entity entity, Vec3d oldPos, Vec3d newPos) {
+        // Calculate movement vector
+        Vec3d movement = newPos.subtract(oldPos);
+
+        // Since adjustMovementForCollisions is private in Entity, we need a workaround
+        // We'll use MixinEntity to access this functionality
+        // For now, we'll simply use a basic collision check
+
+        // Create a box at the new position
+        net.minecraft.util.math.Box newBox = entity.getBoundingBox().offset(movement);
+
+        // Check if the new box collides with world blocks
+        boolean wouldCollide = !entity.getWorld().isSpaceEmpty(entity, newBox);
+
+        // If there would be a collision, don't use the new position
+        Vec3d adjustedMovement = wouldCollide ? Vec3d.ZERO : movement;
+
+        // If the movement was modified, there would be a collision
+        if (!adjustedMovement.equals(movement)) {
+            // Use the adjusted movement instead
+            return oldPos.add(adjustedMovement);
         }
 
-        // Get the entity's current bounding box
-        Box entityBox = entity.getBoundingBox();
-
-        // Calculate the new bounding box after movement
-        Box newBox = entityBox.offset(movement);
-
-        // Check if the new box collides with any world blocks
-        return !hasWorldBlockCollisions(entity.getWorld(), newBox);
+        return newPos;
     }
 
     /**
-     * Checks if a bounding box collides with any world blocks.
+     * Adjusts entity velocity based on collision.
      *
-     * @param world The world to check in
-     * @param box The bounding box to check
-     * @return True if there are collisions, false otherwise
+     * @param entity The entity to adjust
+     * @param contact The contact information
      */
-    private boolean hasWorldBlockCollisions(net.minecraft.world.World world, Box box) {
-        // Get the block positions that the box could intersect with
-        int minX = (int) Math.floor(box.minX);
-        int minY = (int) Math.floor(box.minY);
-        int minZ = (int) Math.floor(box.minZ);
-        int maxX = (int) Math.ceil(box.maxX);
-        int maxY = (int) Math.ceil(box.maxY);
-        int maxZ = (int) Math.ceil(box.maxZ);
+    private void handleVelocityAdjustment(Entity entity, Contact contact) {
+        // Get current velocity
+        Vec3d velocity = entity.getVelocity();
 
-        // Check each potential block
-        for (int x = minX; x < maxX; x++) {
-            for (int y = minY; y < maxY; y++) {
-                for (int z = minZ; z < maxZ; z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockState blockState = world.getBlockState(pos);
+        // Early out if velocity is negligible
+        if (velocity.lengthSquared() < 1e-6) {
+            return;
+        }
 
-                    // Skip air blocks
-                    if (blockState.isAir()) {
-                        continue;
-                    }
+        // Get contact normal
+        Vector3f normal = contact.getContactNormal();
 
-                    // Get the block's collision shape
-                    VoxelShape shape = blockState.getCollisionShape(world, pos);
+        // Convert to Vector3d for more precise math
+        Vector3d velocityVec = new Vector3d(velocity.x, velocity.y, velocity.z);
+        Vector3d normalVec = new Vector3d(normal.x, normal.y, normal.z);
 
-                    // FIX: Skip empty shapes
-                    if (shape.isEmpty()) {
-                        continue;
-                    }
+        // Calculate dot product to get component along normal
+        double dot = velocityVec.dot(normalVec);
 
-                    // Get the block's bounding box and check for intersection
-                    Box blockBox = shape.getBoundingBox().offset(pos);
+        // Only cancel velocity if moving into the surface
+        if (dot < 0) {
+            // Calculate reflected velocity (with damping)
+            Vector3d normalComponent = new Vector3d(normalVec);
+            normalComponent.scale(dot);
 
-                    // Check for intersection
-                    if (blockBox.intersects(box)) {
-                        return true;
-                    }
-                }
+            // Remove normal component to get tangential component
+            Vector3d tangentialComponent = new Vector3d(velocityVec);
+            tangentialComponent.sub(normalComponent);
+
+            // For ground contacts, dampen vertical velocity completely
+            if (contact.isGroundContact()) {
+                // Set new velocity with zero vertical component
+                entity.setVelocity(tangentialComponent.x, 0, tangentialComponent.z);
+            } else {
+                // For side/ceiling contacts, dampen the normal component
+                double restitution = 0.2; // Bounciness factor
+
+                // Calculate damped reflection
+                Vector3d reflectionComponent = new Vector3d(normalComponent);
+                reflectionComponent.scale(-restitution);
+
+                // Combine tangential and reflection components
+                Vector3d newVelocity = new Vector3d(tangentialComponent);
+                newVelocity.add(reflectionComponent);
+
+                // Apply new velocity
+                entity.setVelocity(newVelocity.x, newVelocity.y, newVelocity.z);
+            }
+        }
+
+        // If this is a grid contact, add grid velocity influence
+        if (contact.isGridContact()) {
+            addGridVelocityInfluence(entity, contact);
+        }
+    }
+
+    /**
+     * Adds influence from grid velocity to entity.
+     *
+     * @param entity The entity to influence
+     * @param contact The contact with grid information
+     */
+    private void addGridVelocityInfluence(Entity entity, Contact contact) {
+        // Skip if not a grid contact
+        if (!contact.isGridContact()) {
+            return;
+        }
+
+        // Get grid velocity at contact point
+        Vector3f gridVelocity = contact.getGridVelocityAtContactPoint();
+
+        // Skip if grid isn't moving significantly
+        if (gridVelocity.lengthSquared() < 1e-4) {
+            return;
+        }
+
+        // Get current entity velocity
+        Vec3d entityVelocity = entity.getVelocity();
+
+        // Calculate influence factor based on contact type
+        float influenceFactor = 0.3f; // Default influence
+
+        if (contact.isGroundContact()) {
+            // Stronger influence when standing on grid
+            influenceFactor = 0.8f;
+
+            // Special case: if grid is moving upward and entity is on top,
+            // match the grid's vertical velocity to prevent bouncing
+            if (gridVelocity.y > 0) {
+                entityVelocity = new Vec3d(
+                        entityVelocity.x,
+                        Math.max(entityVelocity.y, gridVelocity.y * 0.9),
+                        entityVelocity.z
+                );
+            }
+        }
+
+        // Apply grid velocity influence
+        Vec3d gridInfluence = new Vec3d(
+                gridVelocity.x * influenceFactor,
+                gridVelocity.y * influenceFactor,
+                gridVelocity.z * influenceFactor
+        );
+
+        // Add to entity velocity
+        Vec3d newVelocity = entityVelocity.add(gridInfluence);
+
+        // Apply new velocity
+        entity.setVelocity(newVelocity);
+    }
+
+    /**
+     * Applies friction to horizontal velocity when on ground.
+     *
+     * @param entity The entity to affect
+     */
+    private void applyGroundFriction(Entity entity) {
+        // Get current velocity
+        Vec3d velocity = entity.getVelocity();
+
+        // Skip if not moving horizontally
+        if (Math.abs(velocity.x) < 1e-6 && Math.abs(velocity.z) < 1e-6) {
+            return;
+        }
+
+        // Apply friction to horizontal components
+        Vec3d newVelocity = new Vec3d(
+                velocity.x * GROUND_FRICTION,
+                velocity.y,
+                velocity.z * GROUND_FRICTION
+        );
+
+        // Apply new velocity
+        entity.setVelocity(newVelocity);
+    }
+
+    /**
+     * Checks if an entity should be considered on ground based on contacts.
+     *
+     * @param entity The entity to check
+     * @param contacts List of contacts to check
+     * @return true if the entity is on ground
+     */
+    public boolean checkIfOnGround(Entity entity, List<Contact> contacts) {
+        for (Contact contact : contacts) {
+            if (contact.isGroundContact()) {
+                return true;
             }
         }
 
@@ -203,264 +449,73 @@ public class CollisionResolver implements ILoggingControl {
     }
 
     /**
-     * Tries to find a safe correction vector when the original correction
-     * would push the entity into world blocks.
+     * Sets an entity's onGround state to true.
+     * This is a helper method for fixing the entity's state.
      *
-     * @param entity The entity to correct
-     * @param originalCorrection The original correction vector
-     * @return A safe correction vector, or zero vector if no safe correction is found
+     * @param entity The entity to modify
      */
-    private Vec3d findSafeCorrection(Entity entity, Vec3d originalCorrection) {
-        // Try each component separately
-        Vec3d xCorrection = new Vec3d(originalCorrection.x, 0, 0);
-        Vec3d yCorrection = new Vec3d(0, originalCorrection.y, 0);
-        Vec3d zCorrection = new Vec3d(0, 0, originalCorrection.z);
+    private void setEntityOnGround(Entity entity) {
+        // In a real implementation, this would use @Shadow fields in the mixin
+        // For now, we'll use the public API
+        entity.setOnGround(true);
 
-        // Check each component
-        boolean xSafe = isMovementSafe(entity, xCorrection);
-        boolean ySafe = isMovementSafe(entity, yCorrection);
-        boolean zSafe = isMovementSafe(entity, zCorrection);
-
-        // Build the safe correction
-        double safeX = xSafe ? originalCorrection.x : 0;
-        double safeY = ySafe ? originalCorrection.y : 0;
-        double safeZ = zSafe ? originalCorrection.z : 0;
-
-        // If y correction would push down, zero it out
-        if (safeY < 0) {
-            safeY = 0;
+        // Reset fall distance when landing
+        if (entity.fallDistance > 0) {
+            entity.fallDistance = 0;
         }
-
-        return new Vec3d(safeX, safeY, safeZ);
     }
 
     /**
-     * Updates the entity's on-ground state based on contacts.
-     * An entity is on ground if it has a contact with a normal pointing upward.
+     * Calculates a safe movement vector for an entity being pushed by a grid.
+     * Ensures that the entity won't be pushed into world blocks.
      *
-     * @param entity Entity to update
-     * @param contacts List of contacts for the entity
+     * @param entity The entity being pushed
+     * @param gridMovement The grid's movement vector
+     * @param worldMovementLimit Maximum movement to avoid world blocks
+     * @return A safe movement vector
      */
-    public void updateOnGroundState(Entity entity, List<Contact> contacts) {
-        boolean wasOnGround = entity.isOnGround();
-        boolean isOnGround = false;
+    public Vec3d calculateSafeEntityMovement(Entity entity, Vec3d gridMovement, Vec3d worldMovementLimit) {
+        // Calculate how much the entity would move
+        double movementFactor = 1.0;
 
-        for (Contact contact : contacts) {
-            Vector3f normal = contact.getContactNormal();
+        // Living entities resist movement more
+        if (entity instanceof LivingEntity) {
+            movementFactor = 0.8;
+        }
 
-            // Upward-pointing normal means we're on ground
-            // The threshold 0.7071 is approximately cos(45°)
-            if (normal.y > GROUND_NORMAL_THRESHOLD && contact.getPenetrationDepth() > MIN_GROUND_CONTACT_DEPTH) {
-                isOnGround = true;
-                break;
+        // Calculate initial proposed movement
+        Vec3d proposedMovement = gridMovement.multiply(movementFactor);
+
+        // Check if this would exceed world movement limits
+        if (worldMovementLimit != null) {
+            // Ensure we don't exceed any component of the world limit
+            double xFactor = worldMovementLimit.x != 0 ?
+                    Math.min(1.0, Math.abs(worldMovementLimit.x / proposedMovement.x)) : 1.0;
+            double yFactor = worldMovementLimit.y != 0 ?
+                    Math.min(1.0, Math.abs(worldMovementLimit.y / proposedMovement.y)) : 1.0;
+            double zFactor = worldMovementLimit.z != 0 ?
+                    Math.min(1.0, Math.abs(worldMovementLimit.z / proposedMovement.z)) : 1.0;
+
+            // Get the smallest factor
+            double limitFactor = Math.min(Math.min(xFactor, yFactor), zFactor);
+
+            // Apply limit factor if needed
+            if (limitFactor < 1.0) {
+                proposedMovement = proposedMovement.multiply(limitFactor * 0.9); // Add small safety margin
             }
         }
 
-        // Update entity's ground state
-        if (isOnGround != wasOnGround) {
-            entity.setOnGround(isOnGround);
-            SLogger.log(this, "Updated entity " + entity.getUuid() + " onGround state to: " + isOnGround);
-        }
-    }
+        // Since we can't call entity.adjustMovementForCollisions directly,
+        // we'll use a basic collision check
 
-    /**
-     * Modifies an entity's movement vector when colliding with a grid.
-     * Implements sliding behavior when colliding with walls.
-     *
-     * @param entity Entity that is moving
-     * @param originalMovement Original intended movement
-     * @param contacts Contacts to resolve
-     * @return Modified movement vector
-     */
-    public Vec3d resolveMovement(Entity entity, Vec3d originalMovement, List<Contact> contacts) {
-        // If no movement or no contacts, nothing to resolve
-        if (originalMovement.lengthSquared() < EPSILON || contacts.isEmpty()) {
-            return originalMovement;
-        }
+        // Check if the proposed movement would cause a block collision
+        net.minecraft.util.math.Box newBox = entity.getBoundingBox().offset(proposedMovement);
+        boolean wouldCollide = !entity.getWorld().isSpaceEmpty(entity, newBox);
 
-        // Start with the original movement
-        Vec3d resolvedMovement = originalMovement;
+        // If there would be a collision, apply a smaller movement
+        Vec3d safeMovement = wouldCollide ? proposedMovement.multiply(0.5) : proposedMovement;
 
-        // Sort contacts by penetration depth (deepest first)
-        contacts.sort((a, b) -> Float.compare(b.getPenetrationDepth(), a.getPenetrationDepth()));
-
-        // Process each contact
-        for (Contact contact : contacts) {
-            resolvedMovement = resolveContactMovement(resolvedMovement, contact);
-        }
-
-        return resolvedMovement;
-    }
-
-    /**
-     * Resolves movement for a single contact by splitting into
-     * parallel and perpendicular components.
-     *
-     * @param movement Movement to resolve
-     * @param contact Contact to resolve against
-     * @return Resolved movement
-     */
-    private Vec3d resolveContactMovement(Vec3d movement, Contact contact) {
-        // Get the contact normal
-        Vector3f normal = contact.getContactNormal();
-        Vec3d normalVec = new Vec3d(normal.x, normal.y, normal.z);
-
-        // Calculate dot product (component of movement into the surface)
-        double dot = movement.dotProduct(normalVec);
-
-        // If movement is not going into the surface, no need to resolve
-        if (dot >= 0) {
-            return movement;
-        }
-
-        // Calculate perpendicular component (into the surface)
-        Vec3d perpendicular = normalVec.multiply(dot);
-
-        // Calculate parallel component (along the surface)
-        Vec3d parallel = movement.subtract(perpendicular);
-
-        // Result is just the parallel component
-        return parallel;
-    }
-
-    /**
-     * Adjusts entity velocity based on contacts.
-     * Makes entities slide along surfaces when colliding.
-     *
-     * @param entity Entity to adjust
-     * @param contacts Contacts to consider
-     */
-    public void adjustEntityVelocity(Entity entity, List<Contact> contacts) {
-        if (contacts.isEmpty()) {
-            return;
-        }
-
-        // Get entity's current velocity
-        Vec3d velocity = entity.getVelocity();
-
-        // If no velocity, nothing to adjust
-        if (velocity.lengthSquared() < EPSILON) {
-            return;
-        }
-
-        // Sort contacts by penetration depth (deepest first)
-        contacts.sort((a, b) -> Float.compare(b.getPenetrationDepth(), a.getPenetrationDepth()));
-
-        // Start with the current velocity
-        Vec3d adjustedVelocity = velocity;
-
-        // Process each contact
-        for (Contact contact : contacts) {
-            adjustedVelocity = adjustVelocityForContact(adjustedVelocity, contact);
-        }
-
-        // Only update if the velocity changed
-        if (!adjustedVelocity.equals(velocity)) {
-            entity.setVelocity(adjustedVelocity);
-            SLogger.log(this, "Adjusted entity velocity from " + velocity + " to " + adjustedVelocity);
-        }
-    }
-
-    /**
-     * Adjusts velocity for a single contact, taking into account
-     * the relative velocity of the grid at the contact point.
-     *
-     * @param velocity Velocity to adjust
-     * @param contact Contact to consider
-     * @return Adjusted velocity
-     */
-    private Vec3d adjustVelocityForContact(Vec3d velocity, Contact contact) {
-        // Get contact details
-        Vector3f normal = contact.getContactNormal();
-        Vec3d normalVec = new Vec3d(normal.x, normal.y, normal.z);
-
-        // Get the grid's velocity at the contact point
-        Vector3f gridVelocity = new Vector3f(0, 0, 0);
-        if (contact.isGridContact()) {
-            gridVelocity = contact.getGridVelocityAtContactPoint();
-        }
-
-        // Calculate relative velocity
-        Vec3d relativeVelocity = velocity.subtract(
-                new Vec3d(gridVelocity.x, gridVelocity.y, gridVelocity.z)
-        );
-
-        // Calculate dot product (component of velocity into the surface)
-        double dot = relativeVelocity.dotProduct(normalVec);
-
-        // If velocity is not going into the surface, no need to adjust
-        if (dot >= 0) {
-            return velocity;
-        }
-
-        // Calculate perpendicular component (into the surface)
-        Vec3d perpendicular = normalVec.multiply(dot);
-
-        // Calculate parallel component (along the surface)
-        Vec3d parallel = relativeVelocity.subtract(perpendicular);
-
-        // Result is parallel component plus grid velocity
-        return parallel.add(new Vec3d(gridVelocity.x, gridVelocity.y, gridVelocity.z));
-    }
-
-    /**
-     * Resolves all physics for an entity's contact with grids.
-     * Applies position correction, velocity adjustment, and ground detection.
-     *
-     * @param entity Entity to resolve
-     * @param movement Original movement vector
-     * @param contacts Entity's contacts
-     * @return Resolved movement vector
-     */
-    public Vec3d resolveCollisions(Entity entity, Vec3d movement, List<Contact> contacts) {
-        // Filter for grid-only contacts
-        List<Contact> gridContacts = new ArrayList<>();
-        for (Contact contact : contacts) {
-            if (contact.isGridContact()) {
-                gridContacts.add(contact);
-            }
-        }
-
-        if (gridContacts.isEmpty()) {
-            return movement;
-        }
-
-        // Step 1: Apply gentle position correction to resolve penetration
-        applyGentlePositionCorrection(entity, gridContacts);
-
-        // Step 2: Resolve the movement vector for sliding
-        Vec3d resolvedMovement = resolveMovement(entity, movement, gridContacts);
-
-        // Step 3: Adjust entity velocity
-        adjustEntityVelocity(entity, gridContacts);
-
-        // Step 4: Update ground state
-        updateOnGroundState(entity, gridContacts);
-
-        return resolvedMovement;
-    }
-
-    /**
-     * Groups contacts by the grid object they're with.
-     * Useful for handling multiple contacts with the same grid.
-     *
-     * @param contacts List of contacts to group
-     * @return Map of grids to lists of contacts
-     */
-    public Map<LocalGrid, List<Contact>> groupContactsByGrid(List<Contact> contacts) {
-        Map<LocalGrid, List<Contact>> result = new HashMap<>();
-
-        for (Contact contact : contacts) {
-            if (contact.isGridContact()) {
-                LocalGrid grid = contact.getGrid();
-                if (!result.containsKey(grid)) {
-                    result.put(grid, new ArrayList<>());
-                }
-                result.get(grid).add(contact);
-            }
-        }
-
-        return result;
+        return safeMovement;
     }
 
     @Override

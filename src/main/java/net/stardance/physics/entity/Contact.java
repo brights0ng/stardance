@@ -1,143 +1,174 @@
 package net.stardance.physics.entity;
 
-import com.bulletphysics.collision.broadphase.Dispatcher;
-import com.bulletphysics.collision.dispatch.CollisionObject;
-import com.bulletphysics.collision.narrowphase.ManifoldPoint;
-import com.bulletphysics.collision.narrowphase.PersistentManifold;
-import com.bulletphysics.dynamics.DynamicsWorld;
-import com.bulletphysics.linearmath.Transform;
 import net.minecraft.entity.Entity;
 import net.stardance.core.LocalGrid;
-import net.stardance.utils.ILoggingControl;
-import net.stardance.utils.SLogger;
 
 import javax.vecmath.Vector3f;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Represents a single contact point between an entity and another object.
+ * Represents a contact point between an entity and another object (grid or entity).
+ * Stores information about the contact for collision resolution.
  */
 public class Contact {
+    // The entity involved in the contact
     private final Entity entity;
-    private final Object collidedWith;
-    private final Vector3f contactPoint;
+
+    // What the entity collided with (either grid or entity, not both)
+    private final LocalGrid grid;
+    private final Entity collidedWith;
+
+    // Contact information
     private final Vector3f contactNormal;
+    private final Vector3f contactPoint;
     private final float penetrationDepth;
-    private final Vector3f relativeVelocity;
+
+    // Additional information for grid contacts
+    private Vector3f gridVelocityAtContactPoint;
 
     /**
-     * Creates a new Contact instance.
+     * Creates a new Contact between an entity and another object.
      *
      * @param entity The entity involved in the contact
-     * @param collidedWith The object the entity collided with
-     * @param contactPoint Point in world space where contact occurred
-     * @param contactNormal Normal vector pointing from the contact surface
-     * @param penetrationDepth How deeply the objects are intersecting
-     * @param relativeVelocity Relative velocity at the contact point
+     * @param grid The grid involved in the contact (null if entity-entity contact)
+     * @param collidedWith The other entity involved (null if entity-grid contact)
+     * @param contactNormal The contact normal (pointing from the object to the entity)
+     * @param contactPoint The contact point in world space
+     * @param penetrationDepth The penetration depth
      */
-    public Contact(Entity entity, Object collidedWith, Vector3f contactPoint,
-                   Vector3f contactNormal, float penetrationDepth,
-                   Vector3f relativeVelocity) {
+    public Contact(Entity entity, LocalGrid grid, Entity collidedWith,
+                   Vector3f contactNormal, Vector3f contactPoint, float penetrationDepth) {
         this.entity = entity;
+        this.grid = grid;
         this.collidedWith = collidedWith;
-        this.contactPoint = new Vector3f(contactPoint);
         this.contactNormal = new Vector3f(contactNormal);
+        this.contactPoint = new Vector3f(contactPoint);
         this.penetrationDepth = penetrationDepth;
-        this.relativeVelocity = new Vector3f(relativeVelocity);
+
+        // Ensure normal is normalized
+        if (this.contactNormal.lengthSquared() > 0) {
+            this.contactNormal.normalize();
+        } else {
+            // Default to up if normal is zero
+            this.contactNormal.set(0, 1, 0);
+        }
+
+        // Initialize grid velocity as zero
+        this.gridVelocityAtContactPoint = new Vector3f(0, 0, 0);
     }
 
+    /**
+     * Gets the entity involved in the contact.
+     */
     public Entity getEntity() {
         return entity;
     }
 
-    public Object getCollidedWith() {
+    /**
+     * Gets the grid involved in the contact (may be null).
+     */
+    public LocalGrid getGrid() {
+        return grid;
+    }
+
+    /**
+     * Gets the other entity involved in the contact (may be null).
+     */
+    public Entity getCollidedWith() {
         return collidedWith;
     }
 
-    public Vector3f getContactPoint() {
-        return new Vector3f(contactPoint);
-    }
-
+    /**
+     * Gets the contact normal.
+     * The normal points from the object to the entity.
+     */
     public Vector3f getContactNormal() {
         return new Vector3f(contactNormal);
     }
 
+    /**
+     * Gets the contact point in world space.
+     */
+    public Vector3f getContactPoint() {
+        return new Vector3f(contactPoint);
+    }
+
+    /**
+     * Gets the penetration depth.
+     */
     public float getPenetrationDepth() {
         return penetrationDepth;
     }
 
-    public Vector3f getRelativeVelocity() {
-        return new Vector3f(relativeVelocity);
-    }
-
     /**
-     * Checks if this contact is with a LocalGrid.
+     * Sets the grid's velocity at the contact point.
+     * Only relevant for entity-grid contacts.
      */
-    public boolean isGridContact() {
-        return collidedWith instanceof LocalGrid;
+    public void setGridVelocityAtContactPoint(Vector3f velocity) {
+        this.gridVelocityAtContactPoint = new Vector3f(velocity);
     }
 
     /**
-     * Gets the collided grid, if this is a grid contact.
-     *
-     * @return The LocalGrid, or null if not a grid contact
-     */
-    public LocalGrid getGrid() {
-        return isGridContact() ? (LocalGrid) collidedWith : null;
-    }
-
-    /**
-     * Calculates the grid's velocity at the contact point.
-     *
-     * @return Velocity vector, or zero vector if not a grid contact
+     * Gets the grid's velocity at the contact point.
+     * Only relevant for entity-grid contacts.
      */
     public Vector3f getGridVelocityAtContactPoint() {
-        if (!isGridContact()) {
-            return new Vector3f(0, 0, 0);
-        }
+        return new Vector3f(gridVelocityAtContactPoint);
+    }
 
-        LocalGrid grid = getGrid();
-        if (grid.getRigidBody() == null) {
-            return new Vector3f(0, 0, 0);
-        }
+    /**
+     * Checks if this is a grid contact.
+     */
+    public boolean isGridContact() {
+        return grid != null;
+    }
 
-        // Get grid's velocity
-        Vector3f linearVel = new Vector3f();
-        Vector3f angularVel = new Vector3f();
-        grid.getRigidBody().getLinearVelocity(linearVel);
-        grid.getRigidBody().getAngularVelocity(angularVel);
+    /**
+     * Checks if this is an entity contact.
+     */
+    public boolean isEntityContact() {
+        return collidedWith != null;
+    }
 
-        // Calculate contact point relative to grid center
-        Transform gridTransform = new Transform();
-        grid.getRigidBody().getWorldTransform(gridTransform);
+    /**
+     * Checks if this contact would count as ground.
+     * A contact is considered ground if the normal is pointing upward at a
+     * sufficient angle (within 45 degrees of straight up).
+     */
+    public boolean isGroundContact() {
+        // Threshold is cos(45 degrees) ≈ 0.7071
+        return contactNormal.y > 0.7071f;
+    }
 
-        Vector3f gridCenter = new Vector3f();
-        gridTransform.origin.get(gridCenter);
+    /**
+     * Checks if this contact is a side contact.
+     * A side contact has a significant horizontal component.
+     */
+    public boolean isSideContact() {
+        // Check if horizontal component is significant
+        float horizontalComponent = (float) Math.sqrt(
+                contactNormal.x * contactNormal.x +
+                        contactNormal.z * contactNormal.z
+        );
 
-        Vector3f relativePos = new Vector3f();
-        relativePos.sub(contactPoint, gridCenter);
+        return horizontalComponent > 0.5f;
+    }
 
-        // Calculate velocity at contact point (v = linear + angular × r)
-        Vector3f velocityAtPoint = new Vector3f(linearVel);
-        Vector3f angularComponent = new Vector3f();
-        angularComponent.cross(angularVel, relativePos);
-        velocityAtPoint.add(angularComponent);
-
-        return velocityAtPoint;
+    /**
+     * Checks if this contact is a ceiling contact.
+     * A ceiling contact has the normal pointing significantly downward.
+     */
+    public boolean isCeilingContact() {
+        return contactNormal.y < -0.7071f;
     }
 
     @Override
     public String toString() {
-        String collidedWithStr = isGridContact() ?
-                "Grid[" + getGrid().getGridId() + "]" :
-                collidedWith.getClass().getSimpleName();
-
+        String objectType = isGridContact() ? "Grid" : "Entity";
         return "Contact{" +
-                "entity=" + entity.getType().getName().getString() +
-                ", collidedWith=" + collidedWithStr +
+                "with=" + objectType +
                 ", normal=" + contactNormal +
                 ", depth=" + penetrationDepth +
+                ", point=" + contactPoint +
                 '}';
     }
 }

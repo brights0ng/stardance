@@ -110,7 +110,7 @@ public class PhysicsEngine implements ILoggingControl {
         entityPhysicsManager.updateEntitiesInSubchunks(world);
 
         // In PhysicsEngine.tick method, before stepSimulation
-// Add this debugging code to identify problematic collisions
+        // Add this debugging code to identify problematic collisions
         Set<String> shapeTypeCombinations = new HashSet<>();
         int numManifolds = dispatcher.getNumManifolds();
         for (int i = 0; i < numManifolds; i++) {
@@ -337,6 +337,6 @@ public class PhysicsEngine implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true;
+        return false;
     }
 }

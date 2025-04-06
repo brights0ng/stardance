@@ -1,28 +1,31 @@
-package net.stardance.mixin.entity;
+package net.stardance.mixin.physics;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.MovementType;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.nbt.NbtCompound;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
-import net.stardance.core.LocalGrid;
 import net.stardance.physics.PhysicsEngine;
 import net.stardance.physics.entity.CollisionResolver;
 import net.stardance.physics.entity.Contact;
 import net.stardance.physics.entity.ContactDetector.SweepResult;
 import net.stardance.Stardance;
+import net.stardance.physics.entity.EntityPhysicsManager;
 import net.stardance.utils.ILoggingControl;
 import net.stardance.utils.SLogger;
 import org.joml.Vector3d;
+import org.slf4j.Logger;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 
 import javax.vecmath.Vector3f;
@@ -33,7 +36,7 @@ import java.util.List;
  * Uses an approach similar to Valkyrien Skies 2 for smooth sliding.
  */
 @Mixin(Entity.class)
-public abstract class EntityMovementMixin implements ILoggingControl {
+public abstract class MixinEntity implements ILoggingControl {
 
     @Shadow
     public abstract Vec3d getVelocity();
@@ -51,6 +54,16 @@ public abstract class EntityMovementMixin implements ILoggingControl {
 
     @Shadow public abstract boolean isFireImmune();
 
+    @Shadow private boolean onGround;
+
+    @Shadow public float fallDistance;
+
+    @Shadow public abstract boolean saveSelfNbt(NbtCompound nbt);
+
+    @Shadow protected abstract void checkBlockCollision();
+
+    @Shadow @Final private static Logger LOGGER;
+
     @Override
     public boolean stardance$isChatLoggingEnabled() {
         return false;
@@ -58,7 +71,7 @@ public abstract class EntityMovementMixin implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true;
+        return false;
     }
 
     /**
@@ -74,7 +87,9 @@ public abstract class EntityMovementMixin implements ILoggingControl {
     )
     private Vec3d collideWithGrids(Entity entity, Vec3d originalMovement, Operation<Vec3d> vanillaCollide) {
         // Skip for non-physical entities
-        if (entity.isSpectator() || entity.noClip) {
+        // Get physics engine
+        PhysicsEngine engine = Stardance.engineManager.getEngine(entity.getWorld());
+        if (entity.isSpectator() || entity.noClip || engine == null || !engine.getEntityPhysicsManager().getTrackedEntities().contains(entity)) {
             return vanillaCollide.call(entity, originalMovement);
         }
 
@@ -83,6 +98,7 @@ public abstract class EntityMovementMixin implements ILoggingControl {
 
         // Adjust movement for grid collisions first
         Vec3d adjustedMovement = adjustMovementForGridCollisions(entity, originalMovement, entityBox);
+        LOGGER.info("Original: " + originalMovement + ", Adjusted: " + adjustedMovement);
 
         // Then let vanilla handle world block collisions
         Vec3d collisionResultWithWorld = vanillaCollide.call(entity, adjustedMovement);
@@ -95,10 +111,10 @@ public abstract class EntityMovementMixin implements ILoggingControl {
 
         return collisionResultWithWorld;
     }
-
     /**
      * Calculate squared distance between two vectors
      */
+    @Unique
     private double calculateSquaredDistance(Vec3d a, Vec3d b) {
         double dx = a.x - b.x;
         double dy = a.y - b.y;
@@ -117,11 +133,10 @@ public abstract class EntityMovementMixin implements ILoggingControl {
                     value = "INVOKE",
                     target = "Lnet/minecraft/entity/Entity;setVelocity(DDD)V"
             ),
-            cancellable = true,
-            locals = LocalCapture.CAPTURE_FAILHARD
+            cancellable = true
     )
     private void preserveMomentumAfterCollision(MovementType type, Vec3d movement,
-                                                CallbackInfo ci, Vec3d collisionResult) {
+                                                CallbackInfo ci, @Local(ordinal = 1) Vec3d collisionResult) {
         Entity self = (Entity)(Object)this;
 
         // Skip for non-physical entities
@@ -129,27 +144,34 @@ public abstract class EntityMovementMixin implements ILoggingControl {
             return;
         }
 
-        Vector3d collisionResponse = new Vector3d(collisionResult.x - movement.x,collisionResult.y - movement.y,collisionResult.z - movement.z);
+        Vector3d collisionResponse = new Vector3d(
+                collisionResult.x - movement.x,
+                collisionResult.y - movement.y,
+                collisionResult.z - movement.z
+        );
 
-        if(collisionResponse.lengthSquared() > 1e-6){
+        if (collisionResponse.lengthSquared() > 1e-6) {
             Vec3d currentVelocity = getVelocity();
 
-            Vector3d collisionResponseNormal = new Vector3d(collisionResponse).normalize();
+            Vector3d collisionResponseNormal = new Vector3d(collisionResponse);
+            collisionResponseNormal.normalize();
 
             double parallelComponent = collisionResponseNormal.dot(
                     currentVelocity.x, currentVelocity.y, currentVelocity.z
             );
 
-            // Only remove the parallel component of velocity (preserving perpendicular motion)
-            setVelocity(
-                    currentVelocity.x - collisionResponseNormal.x * parallelComponent,
-                    currentVelocity.y - collisionResponseNormal.y * parallelComponent,
-                    currentVelocity.z - collisionResponseNormal.z * parallelComponent
-            );
+            // Only remove the parallel component of velocity if moving into the surface
+            if (parallelComponent < 0) {
+                setVelocity(
+                        currentVelocity.x - collisionResponseNormal.x * parallelComponent,
+                        currentVelocity.y - collisionResponseNormal.y * parallelComponent,
+                        currentVelocity.z - collisionResponseNormal.z * parallelComponent
+                );
+            }
         }
 
         // Still perform tryCheckInsideBlocks since we're cancelling part of move()
-        tryCheckBlockCollision();
+        checkBlockCollision();
 
         // Cancel the vanilla velocity zeroing behavior
         ci.cancel();
@@ -188,8 +210,8 @@ public abstract class EntityMovementMixin implements ILoggingControl {
         // Get the collision resolver
         CollisionResolver resolver = engine.getEntityPhysicsManager().getCollisionResolver();
 
-        // Apply gentle position correction and ground detection
-        resolver.applyGentlePositionCorrection(self, contacts);
+        // Process post-movement collision with our physics system
+        engine.getEntityPhysicsManager().processPostMovement(self, movement, movement);
 
         // Log collision resolution for debugging
         if (self instanceof PlayerEntity && !contacts.isEmpty()) {
@@ -214,13 +236,18 @@ public abstract class EntityMovementMixin implements ILoggingControl {
             return movement;
         }
 
-        // Get current server tick
-        long currentTick = entity.getWorld().getTime();
+        // Get entity physics manager
+        EntityPhysicsManager manager = engine.getEntityPhysicsManager();
+        if (manager == null) {
+            return movement;
+        }
 
-        // Perform sweep test to detect collisions with grids
-        SweepResult result = engine.getEntityPhysicsManager()
-                .getContactDetector().performBestSweepTest(
-                        entity, movement, engine.getEntityPhysicsManager().getEntityProxies());
+        // Force track this entity if it's not already tracked
+        manager.forceTrackEntity(entity);
+
+        // Perform sweep test to detect collision with grids
+        SweepResult result = manager.getContactDetector().convexSweepTest(
+                entity, movement, manager.getEntityProxies());
 
         // If no collision detected, return original movement
         if (result == null) {
@@ -236,7 +263,7 @@ public abstract class EntityMovementMixin implements ILoggingControl {
         if (remainingTime > 0.01) {
             // Calculate deflected component for remaining movement (sliding)
             Vec3d remainingMovement = movement.multiply(remainingTime);
-            Vec3d deflectedMovement = result.getDeflectedMovement(remainingMovement, remainingTime);
+            Vec3d deflectedMovement = result.getDeflectedMovement(remainingMovement, (float) remainingTime);
 
             // Combine safe movement with deflected remaining movement
             return safeMovement.add(deflectedMovement);
@@ -268,8 +295,7 @@ public abstract class EntityMovementMixin implements ILoggingControl {
         }
 
         // Get contacts from the physics system
-        List<Contact> contacts = engine.getEntityPhysicsManager()
-                .getContactDetector().getContactsForEntity(self);
+        List<Contact> contacts = engine.getEntityPhysicsManager().getContactDetector().getContactsForEntity(self);
 
         boolean isOnGrid = false;
 
@@ -288,12 +314,29 @@ public abstract class EntityMovementMixin implements ILoggingControl {
         }
 
         // If the entity is on a grid, directly set the onGround field
-        // We need to use reflection or accessor mixin for this
         if (isOnGrid) {
-            // For now, we'll use a workaround to set onGround
-            // In a full implementation, you'd use an accessor mixin
-            // This is a placeholder until we can implement proper access
-            (self).setOnGround(true);
+            self.setOnGround(true);
+            self.fallDistance = 0;
         }
+    }
+
+    /**
+     * Provides access to the onGround field for physics system.
+     * Public accessor required by EntityPhysicsManager.
+     *
+     * @param value The new onGround value
+     */
+    public void stardance$setOnGround(boolean value) {
+        this.onGround = value;
+    }
+
+    /**
+     * Provides access to the fallDistance field for physics system.
+     * Public accessor required by EntityPhysicsManager.
+     *
+     * @param value The new fallDistance value
+     */
+    public void stardance$setFallDistance(float value) {
+        this.fallDistance = value;
     }
 }

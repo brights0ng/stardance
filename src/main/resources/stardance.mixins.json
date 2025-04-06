@@ -4,7 +4,7 @@
   "compatibilityLevel": "JAVA_17",
   "mixins": [
     "accessors.EntityAccessor",
-    "entity.EntityMovementMixin"
+    "physics.MixinEntity"
   ],
   "injectors": {
     "defaultRequire": 1
