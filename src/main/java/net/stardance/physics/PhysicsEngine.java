@@ -15,7 +15,6 @@ import com.bulletphysics.dynamics.constraintsolver.SequentialImpulseConstraintSo
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.stardance.core.LocalGrid;
-import net.stardance.physics.entity.EntityPhysicsManager;
 import net.stardance.utils.BlockEventHandler;
 import net.stardance.utils.ILoggingControl;
 import net.stardance.utils.SLogger;
@@ -60,7 +59,6 @@ public class PhysicsEngine implements ILoggingControl {
     // -------------------------------------------
 
     private final SubchunkManager subchunkManager;
-    private final EntityPhysicsManager entityPhysicsManager;
     private final Set<LocalGrid> localGrids = ConcurrentHashMap.newKeySet();
 
     // -------------------------------------------
@@ -88,8 +86,6 @@ public class PhysicsEngine implements ILoggingControl {
 
         // Initialize subsystems
         this.subchunkManager = new SubchunkManager(dynamicsWorld, serverWorld);
-        this.entityPhysicsManager = new EntityPhysicsManager(this, serverWorld);
-
         // Connect block events to subchunk manager
         new BlockEventHandler(subchunkManager);
     }
@@ -105,9 +101,6 @@ public class PhysicsEngine implements ILoggingControl {
     public void tick(ServerWorld world) {
         // Update chunk-based data
         subchunkManager.updateDirtySubchunks();
-
-        // Update tracked entities
-        entityPhysicsManager.updateEntitiesInSubchunks(world);
 
         // In PhysicsEngine.tick method, before stepSimulation
         // Add this debugging code to identify problematic collisions
@@ -131,9 +124,6 @@ public class PhysicsEngine implements ILoggingControl {
 
         // Step the simulation
         stepSimulation(TICK_DELTA, MAX_SUB_STEPS);
-
-        // Collect contact information
-        entityPhysicsManager.getContactDetector().collectContacts();
 
         // Adjust collision normals for better behavior
         adjustContactNormals();
@@ -309,12 +299,6 @@ public class PhysicsEngine implements ILoggingControl {
         return localGrids;
     }
 
-    /**
-     * Gets the entity physics manager.
-     */
-    public EntityPhysicsManager getEntityPhysicsManager() {
-        return entityPhysicsManager;
-    }
 
     /**
      * Gets the subchunk manager.
