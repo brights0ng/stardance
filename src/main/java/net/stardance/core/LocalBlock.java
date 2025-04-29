@@ -21,7 +21,7 @@ public class LocalBlock {
     public LocalBlock(BlockPos position, BlockState state) {
         this.position = position;
         this.state = state;
-        this.mass = 10.0f; // Default mass
+        this.mass = 50.0f; // Default mass
     }
 
     // Getters and setters

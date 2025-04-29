@@ -10,11 +10,13 @@ import com.bulletphysics.collision.narrowphase.ManifoldPoint;
 import com.bulletphysics.collision.narrowphase.PersistentManifold;
 import com.bulletphysics.dynamics.DiscreteDynamicsWorld;
 import com.bulletphysics.dynamics.DynamicsWorld;
+import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.dynamics.constraintsolver.ConstraintSolver;
 import com.bulletphysics.dynamics.constraintsolver.SequentialImpulseConstraintSolver;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.stardance.core.LocalGrid;
+import net.stardance.physics.entity.EntityPhysicsManager;
 import net.stardance.utils.BlockEventHandler;
 import net.stardance.utils.ILoggingControl;
 import net.stardance.utils.SLogger;
@@ -23,6 +25,9 @@ import javax.vecmath.Vector3f;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static net.stardance.physics.EngineManager.COLLISION_GROUP_GRID;
+import static net.stardance.physics.EngineManager.COLLISION_MASK_GRID;
 
 /**
  * Core physics simulation controller for a ServerWorld.
@@ -60,6 +65,7 @@ public class PhysicsEngine implements ILoggingControl {
 
     private final SubchunkManager subchunkManager;
     private final Set<LocalGrid> localGrids = ConcurrentHashMap.newKeySet();
+    private final EntityPhysicsManager entityPhysicsManager;
 
     // -------------------------------------------
     // CONSTRUCTOR
@@ -86,6 +92,7 @@ public class PhysicsEngine implements ILoggingControl {
 
         // Initialize subsystems
         this.subchunkManager = new SubchunkManager(dynamicsWorld, serverWorld);
+        this.entityPhysicsManager = new EntityPhysicsManager(this,serverWorld);
         // Connect block events to subchunk manager
         new BlockEventHandler(subchunkManager);
     }
@@ -104,26 +111,30 @@ public class PhysicsEngine implements ILoggingControl {
 
         // In PhysicsEngine.tick method, before stepSimulation
         // Add this debugging code to identify problematic collisions
-        Set<String> shapeTypeCombinations = new HashSet<>();
-        int numManifolds = dispatcher.getNumManifolds();
-        for (int i = 0; i < numManifolds; i++) {
-            PersistentManifold manifold = dispatcher.getManifoldByIndexInternal(i);
-            CollisionObject bodyA = (CollisionObject) manifold.getBody0();
-            CollisionObject bodyB = (CollisionObject) manifold.getBody1();
+//        Set<String> shapeTypeCombinations = new HashSet<>();
+//        int numManifolds = dispatcher.getNumManifolds();
+//        for (int i = 0; i < numManifolds; i++) {
+//            PersistentManifold manifold = dispatcher.getManifoldByIndexInternal(i);
+//            CollisionObject bodyA = (CollisionObject) manifold.getBody0();
+//            CollisionObject bodyB = (CollisionObject) manifold.getBody1();
+//
+//            String typeA = bodyA.getCollisionShape().getClass().getSimpleName();
+//            String typeB = bodyB.getCollisionShape().getClass().getSimpleName();
+//            String combo = typeA + " vs " + typeB;
+//
+//            shapeTypeCombinations.add(combo);
+//        }
+//
+//        for (String combo : shapeTypeCombinations) {
+//            SLogger.log(this, "Shape combination: " + combo);
+//        }
 
-            String typeA = bodyA.getCollisionShape().getClass().getSimpleName();
-            String typeB = bodyB.getCollisionShape().getClass().getSimpleName();
-            String combo = typeA + " vs " + typeB;
-
-            shapeTypeCombinations.add(combo);
-        }
-
-        for (String combo : shapeTypeCombinations) {
-            SLogger.log(this, "Shape combination: " + combo);
-        }
 
         // Step the simulation
         stepSimulation(TICK_DELTA, MAX_SUB_STEPS);
+
+        // Perform entity physics
+        entityPhysicsManager.updateEntitiesInSubchunks(world);
 
         // Adjust collision normals for better behavior
         adjustContactNormals();
@@ -131,6 +142,10 @@ public class PhysicsEngine implements ILoggingControl {
         // Update each LocalGrid
         for (LocalGrid grid : localGrids) {
             grid.tickUpdate();
+        }
+
+        for (CollisionObject object : dynamicsWorld.getCollisionObjectArray()){
+            SLogger.log(this, "Object: " + object.getCollisionShape().getShapeType().toString() + "; Group: " + object.getBroadphaseHandle().collisionFilterGroup + "; Mask: " + object.getBroadphaseHandle().collisionFilterMask);
         }
     }
 
@@ -187,9 +202,16 @@ public class PhysicsEngine implements ILoggingControl {
         synchronized (physicsLock) {
             localGrids.add(localGrid);
 
+            RigidBody rigidBody = localGrid.getRigidBody();
+
             // Add rigid body to physics world if available
-            if (localGrid.getRigidBody() != null) {
+            if (rigidBody != null) {
                 dynamicsWorld.addRigidBody(localGrid.getRigidBody());
+
+                if (rigidBody.getBroadphaseHandle() != null) {
+                    rigidBody.getBroadphaseHandle().collisionFilterGroup = COLLISION_GROUP_GRID;
+                    rigidBody.getBroadphaseHandle().collisionFilterMask = COLLISION_MASK_GRID;
+                }
             }
         }
     }
@@ -206,6 +228,11 @@ public class PhysicsEngine implements ILoggingControl {
         int numManifolds = dispatcher.getNumManifolds();
         for (int i = 0; i < numManifolds; i++) {
             PersistentManifold manifold = dispatcher.getManifoldByIndexInternal(i);
+
+            if (manifold == null){
+                continue;
+            }
+
             CollisionObject colObj0 = (CollisionObject) manifold.getBody0();
             CollisionObject colObj1 = (CollisionObject) manifold.getBody1();
 
@@ -308,6 +335,15 @@ public class PhysicsEngine implements ILoggingControl {
     }
 
     /**
+     * Gets the entity physics manager
+     */
+    public EntityPhysicsManager getEntityPhysicsManager(){
+        return entityPhysicsManager;
+    }
+
+
+
+    /**
      * Gets the physics lock for synchronization.
      */
     public Object getPhysicsLock() {
@@ -321,6 +357,6 @@ public class PhysicsEngine implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return false;
+        return true;
     }
 }

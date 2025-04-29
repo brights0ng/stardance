@@ -24,6 +24,9 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import static net.stardance.physics.EngineManager.COLLISION_GROUP_GRID;
+import static net.stardance.physics.EngineManager.COLLISION_MASK_GRID;
+
 /**
  * Handles physics-related functionality for a LocalGrid.
  * This class is package-private - external code should use LocalGrid instead.
@@ -214,6 +217,11 @@ class GridPhysicsComponent {
         // Add back to world
         grid.getEngine().getDynamicsWorld().addRigidBody(rigidBody);
 
+        if (rigidBody.getBroadphaseHandle() != null) {
+            rigidBody.getBroadphaseHandle().collisionFilterGroup = COLLISION_GROUP_GRID;
+            rigidBody.getBroadphaseHandle().collisionFilterMask = COLLISION_MASK_GRID;
+        }
+
         // Reset to dynamic if needed
         if (!wasKinematic) {
             rigidBody.setCollisionFlags(rigidBody.getCollisionFlags() & ~CollisionFlags.KINEMATIC_OBJECT);
@@ -372,6 +380,8 @@ class GridPhysicsComponent {
 
         // Activate the rigid body
         rigidBody.activate(true);
+
+
     }
 
     /**
@@ -419,7 +429,7 @@ class GridPhysicsComponent {
                 BlockPos pos = localBlock.getPosition();
 
                 // Increase mass for better stability
-                float blockMass = localBlock.getMass() * 5.0f;
+                float blockMass = localBlock.getMass();
                 massAcc += blockMass;
 
                 // Add weighted position to centroid

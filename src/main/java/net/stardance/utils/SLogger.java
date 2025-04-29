@@ -26,7 +26,15 @@ public class SLogger {
         if (logger.stardance$isChatLoggingEnabled() & serverInstance != null) {
             for (ServerWorld world : serverInstance.getWorlds()) {
                 sendToChat(world, logMessage);
-            }        }
+            }
+        }
+    }
+
+    // Method to log a message based on ILoggingControl
+    public static void log(String clazz, String message) {
+        String logMessage = "[" + clazz + "] " + message;
+
+        LOGGER.info(logMessage);
     }
 
     // Method to send a message to all players in the world

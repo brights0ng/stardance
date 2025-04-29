@@ -1,5 +1,6 @@
 package net.stardance.physics;
 
+import com.bulletphysics.collision.broadphase.CollisionFilterGroups;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.world.World;
@@ -25,6 +26,13 @@ public class EngineManager implements ILoggingControl {
      * Uses ConcurrentHashMap for thread safety.
      */
     private final ConcurrentHashMap<ServerWorld, PhysicsEngine> engines = new ConcurrentHashMap<>();
+
+    public static final short COLLISION_GROUP_ENTITY = 4;
+    public static final short COLLISION_GROUP_GRID = 1;
+    public static final short COLLISION_GROUP_MESH = 2;
+    public static final short COLLISION_MASK_ENTITY = COLLISION_GROUP_GRID;
+    public static final short COLLISION_MASK_GRID = (short)(COLLISION_GROUP_GRID | COLLISION_GROUP_ENTITY | COLLISION_GROUP_MESH);
+    public static final short COLLISION_MASK_MESH = COLLISION_GROUP_GRID;
 
     // ----------------------------------------------
     // LOGGING CONTROL

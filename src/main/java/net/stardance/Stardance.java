@@ -1,6 +1,8 @@
 package net.stardance;
 
+import com.mojang.brigadier.CommandDispatcher;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
@@ -35,7 +37,6 @@ public class Stardance implements ModInitializer {
 	// Shared managers accessible throughout the mod
 	public static final EngineManager engineManager = new EngineManager();
 	public static final SchemManager schemManager = new SchemManager();
-	public static final CommandRegistry commandRegistry = new CommandRegistry();
 
 	// Interaction / server references
 	private static final GridInteractionHandler gridInteractionHandler = new GridInteractionHandler();
@@ -59,7 +60,7 @@ public class Stardance implements ModInitializer {
 
 		// Register any custom items, commands, etc.
 		ModItems.registerItems();
-		commandRegistry.init();
+		CommandRegistry.init();
 
 		// Capture the server instance on startup
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> serverInstance = server);

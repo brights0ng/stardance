@@ -20,6 +20,9 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
+import static net.stardance.physics.EngineManager.COLLISION_GROUP_MESH;
+import static net.stardance.physics.EngineManager.COLLISION_MASK_MESH;
+
 public class SubchunkMesh implements ILoggingControl {
     private SubchunkCoordinates coords;
     private TriangleIndexVertexArray meshData;
@@ -375,6 +378,9 @@ public class SubchunkMesh implements ILoggingControl {
 
             // Add to dynamics world
             dynamicsWorld.addRigidBody(rigidBody);
+
+            rigidBody.getBroadphaseProxy().collisionFilterGroup = COLLISION_GROUP_MESH;
+            rigidBody.getBroadphaseProxy().collisionFilterMask = COLLISION_MASK_MESH;
             isActive = true;
             SLogger.log(this, "Added subchunk at coords " + coords + " to physics world.");
         }
