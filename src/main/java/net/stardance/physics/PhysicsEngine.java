@@ -16,13 +16,11 @@ import com.bulletphysics.dynamics.constraintsolver.SequentialImpulseConstraintSo
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.stardance.core.LocalGrid;
-import net.stardance.physics.entity.EntityPhysicsManager;
 import net.stardance.utils.BlockEventHandler;
 import net.stardance.utils.ILoggingControl;
 import net.stardance.utils.SLogger;
 
 import javax.vecmath.Vector3f;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 

@@ -3,7 +3,6 @@ package net.stardance.debug;
 import com.bulletphysics.collision.shapes.CollisionShape;
 import com.bulletphysics.collision.shapes.ConvexShape;
 import com.bulletphysics.dynamics.RigidBody;
-import com.bulletphysics.linearmath.Transform;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
@@ -12,8 +11,6 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.stardance.core.LocalGrid;
 import net.stardance.physics.PhysicsEngine;
-import net.stardance.physics.entity.ContactDetector;
-import net.stardance.physics.entity.EntityProxy;
 import net.stardance.render.DebugRenderer;
 import net.stardance.Stardance;
 
