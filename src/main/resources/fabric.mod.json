@@ -16,13 +16,13 @@
 	"environment": "*",
 	"entrypoints": {
 		"main": [
-			"net.stardance.Stardance"
+          "net.starlight.stardance.Stardance"
 		],
 		"fabric-datagen": [
-			"net.stardance.StardanceDataGenerator"
+          "net.starlight.stardance.StardanceDataGenerator"
 		],
 		"client": [
-			"net.stardance.StardanceClient"
+          "net.starlight.stardance.StardanceClient"
 		]
 	},
 	"mixins": [
