@@ -790,4 +790,7 @@ public class EntityPhysicsManager implements ILoggingControl {
         return false; // Enable console logging for debugging
     }
 
+    public PhysicsEngine getEngine() {
+        return physicsEngine;
+    }
 }

@@ -370,7 +370,7 @@ public class CollisionResolver implements ILoggingControl {
 
         // Use entity.refreshPositionAndAngles instead of setPosition to ensure proper updates
         // This is crucial for preventing the position correction from being overridden
-        entity.refreshPositionAndAngles(safePos.x, safePos.y, safePos.z, entity.getYaw(), entity.getPitch());
+//        entity.refreshPositionAndAngles(safePos.x, safePos.y, safePos.z, entity.getYaw(), entity.getPitch());
 
         // Also directly update the position to ensure it takes effect immediately
         entity.setPosition(safePos);

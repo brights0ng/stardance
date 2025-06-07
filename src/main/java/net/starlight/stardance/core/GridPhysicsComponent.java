@@ -342,7 +342,7 @@ class GridPhysicsComponent {
         this.collisionShape = compound;
 
         // Calculate inertia - use higher mass for stability
-        float initialMass = 10.0f; // Higher mass for stability
+        float initialMass = 100f; // Higher mass for stability
         Vector3f inertia = new Vector3f(0, 0, 0);
         collisionShape.calculateLocalInertia(initialMass, inertia);
 

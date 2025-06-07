@@ -334,7 +334,6 @@ public abstract class MixinEntity implements ILoggingControl {
         manager.forceTrackEntity(entity);
 
         // First check for existing contacts before the movement
-        // This is critical for handling penetrations and stationary grids
         List<Contact> currentContacts = manager.getContactDetector().getContactsForEntity(entity);
         boolean hasSignificantPenetration = false;
         Contact deepestContact = null;
@@ -349,7 +348,7 @@ public abstract class MixinEntity implements ILoggingControl {
             }
         }
 
-        // If we're already penetrating significantly, handle it specially
+        // Handle existing penetrations
         if (hasSignificantPenetration && deepestContact != null) {
             boolean isPlayer = entity instanceof PlayerEntity;
 
@@ -369,7 +368,7 @@ public abstract class MixinEntity implements ILoggingControl {
             // If we're moving further into the object, adjust the movement
             if (dot < 0) {
                 // Create a separation vector to push us out of penetration
-                float separationDistance = deepestContact.getPenetrationDepth() * 1.1f; // Add 10% to ensure we're out
+                float separationDistance = deepestContact.getPenetrationDepth() * 1.1f;
                 Vec3d separationVector = new Vec3d(
                         normal.x * separationDistance,
                         normal.y * separationDistance,
@@ -388,19 +387,14 @@ public abstract class MixinEntity implements ILoggingControl {
 
                 // If there is a tangential component, properly scale it
                 if (tangentialLength > 0.0001) {
-                    // Normalize and scale to a fraction of the original movement magnitude
-                    // This prevents "speed boosts" in the tangential direction
                     tangentialComponent.mul(Math.min(originalLength, tangentialLength) / tangentialLength);
-
-                    // Apply a friction factor for sliding
-                    tangentialComponent.mul(0.8);
+                    tangentialComponent.mul(0.8); // Apply friction
                 }
 
                 // Convert adjusted movement back to Vec3d and combine with separation
                 Vec3d tangentialMovement = new Vec3d(tangentialComponent.x, tangentialComponent.y, tangentialComponent.z);
                 Vec3d combinedMovement = separationVector.add(tangentialMovement);
 
-                // Log the adjustment for debugging
                 if (isPlayer) {
                     String contactType = deepestContact.isGridContact() ? "grid" : "entity";
                     SLogger.log(this, String.format(
@@ -422,15 +416,65 @@ public abstract class MixinEntity implements ILoggingControl {
                 entity, movement, manager.getEntityProxies());
 
         // If no collision detected, return original movement
-        // TO FIX: make a more rigorous system that checks masks and groups
-        if (result == null
-//                || !result.getObject().getCollisionShape().getShapeType().isCompound()
-        ) {
+        if (result == null) {
             return movement;
         }
 
-        // Log collision detection for debugging
         boolean isPlayer = entity instanceof PlayerEntity;
+
+        // CRITICAL FIX: Handle grazing collisions (nearly parallel movements)
+        Vector3f hitNormal = result.getHitNormal();
+        Vector3d normalVec = new Vector3d(hitNormal.x, hitNormal.y, hitNormal.z);
+        normalVec.normalize();
+
+        Vector3d movementVec = new Vector3d(movement.x, movement.y, movement.z);
+        double movementLength = movementVec.length();
+
+        if (movementLength > 0.0001) {
+            Vector3d movementDir = new Vector3d(movementVec);
+            movementDir.mul(1.0 / movementLength);
+
+            // Calculate angle between movement and surface (perpendicular to normal)
+            double dotProduct = Math.abs(movementDir.dot(normalVec));
+            double angleFromSurface = Math.asin(Math.min(1.0, dotProduct)); // Angle in radians
+
+            // If movement is nearly parallel to surface (within ~30 degrees)
+            if (angleFromSurface < Math.toRadians(30)) {
+                // For grazing collisions, try to slide along the surface without stopping
+
+                // Project movement onto the plane defined by the normal
+                Vector3d projectedMovement = new Vector3d(movementVec);
+                Vector3d normalComponent = new Vector3d(normalVec);
+                normalComponent.mul(movementVec.dot(normalVec));
+                projectedMovement.sub(normalComponent);
+
+                // Apply a small push-out to avoid getting stuck
+                double pushOutDistance = 0.02; // Small push-out distance
+                Vector3d pushOut = new Vector3d(normalVec);
+                pushOut.mul(pushOutDistance);
+
+                // Combine projected movement with push-out
+                Vec3d adjustedMovement = new Vec3d(
+                        projectedMovement.x + pushOut.x,
+                        projectedMovement.y + pushOut.y,
+                        projectedMovement.z + pushOut.z
+                );
+
+                if (isPlayer) {
+                    SLogger.log(this, String.format(
+                            "Player grazing collision - angle=%.1f°, normal=(%.2f, %.2f, %.2f), " +
+                                    "original=(%.4f, %.4f, %.4f), adjusted=(%.4f, %.4f, %.4f)",
+                            Math.toDegrees(angleFromSurface),
+                            hitNormal.x, hitNormal.y, hitNormal.z,
+                            movement.x, movement.y, movement.z,
+                            adjustedMovement.x, adjustedMovement.y, adjustedMovement.z));
+                }
+
+                return adjustedMovement;
+            }
+        }
+
+        // For non-grazing collisions, use the original deflection logic
         if (isPlayer) {
             String hitType = result.getGrid() != null ? "grid" : "entity";
             SLogger.log(this, String.format(
@@ -443,20 +487,14 @@ public abstract class MixinEntity implements ILoggingControl {
         }
 
         // Calculate safe movement (just before collision)
-        double safetyMargin = 0.01;
+        // Adjust safety margin based on time of impact
+        double safetyMargin = result.getTimeOfImpact() < 0.1 ? 0.002 : 0.01;
         double safeTime = Math.max(0, result.getTimeOfImpact() - safetyMargin);
         Vec3d safeMovement = movement.multiply(safeTime);
 
         // Only if we still have significant movement remaining after safe movement
         double remainingTime = 1.0 - safeTime;
         if (remainingTime > 0.01) {
-            // Get collision normal
-            Vector3f normal = result.getHitNormal();
-
-            // Convert to Vector3d for more precise math
-            Vector3d normalVec = new Vector3d(normal.x, normal.y, normal.z);
-            normalVec.normalize();
-
             // Calculate remaining movement
             Vec3d remainingMovement = movement.multiply(remainingTime);
 
@@ -491,7 +529,6 @@ public abstract class MixinEntity implements ILoggingControl {
                     tangentialComponent.mul(1.0 / tangentialLength);
 
                     // Scale to at most the magnitude of original tangential component
-                    // This is key to preventing speed boosts
                     double deflectionMagnitude = Math.min(
                             remainingMovement.length() * 0.8,  // 80% of remaining length
                             tangentialLength                   // Original tangential length
