@@ -28,6 +28,7 @@ import static net.starlight.stardance.Stardance.serverInstance;
  * Handles rendering of LocalGrids on the client side.
  * Manages interpolation of grid transforms for smooth rendering.
  */
+@Deprecated
 public class GridRenderer implements ILoggingControl {
     // Grid render data cache - using ConcurrentHashMap for thread safety
     private final Map<UUID, GridRenderData> gridRenderDataCache = new ConcurrentHashMap<>();
@@ -88,9 +89,7 @@ public class GridRenderer implements ILoggingControl {
         matrices.pop();
     }
 
-    /**
-     * Renders a LocalGrid that exists in the local engine.
-     */
+    // In GridRenderer.renderLocalGrid(), replace the existing render data logic:
     private void renderLocalGrid(LocalGrid grid, MatrixStack matrices,
                                  VertexConsumerProvider vertexConsumers, float tickDelta, boolean isNewFrame) {
         BlockRenderManager blockRenderer = MinecraftClient.getInstance().getBlockRenderManager();
@@ -98,9 +97,10 @@ public class GridRenderer implements ILoggingControl {
         // Get the cached render data
         GridRenderData renderData = getOrCreateRenderData(grid.getGridId());
 
-        // If we don't have valid render data yet, try to initialize from the grid directly
-        if (renderData.needsInitialization) {
+        // PERFORMANCE: Only update render data if grid has changed or needs initialization
+        if (renderData.needsInitialization || grid.isRenderDataInvalidated()) {
             initializeRenderDataFromGrid(renderData, grid);
+            grid.clearRenderDataInvalidated(); // Clear the flag after updating
         }
 
         // Calculate interpolated position
@@ -122,57 +122,32 @@ public class GridRenderer implements ILoggingControl {
                     ", centroid: " + renderData.centroid);
         }
 
-        // Save original matrix state to restore later
         matrices.push();
-
-        // 1. Translate to the interpolated world position of the grid
         matrices.translate(interpolatedPos.x, interpolatedPos.y, interpolatedPos.z);
 
-        // 2. Apply the interpolated rotation
         org.joml.Quaternionf mcQuat = new org.joml.Quaternionf(
-                interpolatedRot.x,
-                interpolatedRot.y,
-                interpolatedRot.z,
-                interpolatedRot.w
-        );
+                interpolatedRot.x, interpolatedRot.y, interpolatedRot.z, interpolatedRot.w);
         matrices.multiply(mcQuat);
 
-        // Get the blocks from the grid
         Map<BlockPos, LocalBlock> blocks = grid.getBlocks();
-
-        // Render each block
         for (Map.Entry<BlockPos, LocalBlock> entry : blocks.entrySet()) {
             BlockPos pos = entry.getKey();
             BlockState state = entry.getValue().getState();
 
-            // Save matrix state for this block
             matrices.push();
-
-            // 3. Position the block relative to the grid origin
-            // When a block is at (0,0,0) in grid space, it should be at -centroid
-            // to counteract the grid rigid body being centered on the centroid
             matrices.translate(
                     pos.getX() - renderData.centroid.x,
                     pos.getY() - renderData.centroid.y,
                     pos.getZ() - renderData.centroid.z
             );
 
-            // Use Minecraft's block renderer
             blockRenderer.renderBlock(
-                    state,
-                    new BlockPos(0, 0, 0), // render at the current transform
-                    MinecraftClient.getInstance().world,
-                    matrices,
-                    vertexConsumers.getBuffer(net.minecraft.client.render.RenderLayers.getBlockLayer(state)),
-                    false,
-                    MinecraftClient.getInstance().world.random
+                    state, new BlockPos(0, 0, 0), MinecraftClient.getInstance().world,
+                    matrices, vertexConsumers.getBuffer(net.minecraft.client.render.RenderLayers.getBlockLayer(state)),
+                    false, MinecraftClient.getInstance().world.random
             );
-
-            // Restore matrix state to grid transform
             matrices.pop();
         }
-
-        // Restore original matrix state
         matrices.pop();
     }
 

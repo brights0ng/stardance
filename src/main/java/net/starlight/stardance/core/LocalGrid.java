@@ -3,8 +3,10 @@ package net.starlight.stardance.core;
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.linearmath.Transform;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
+import net.starlight.stardance.interaction.GridFurnaceBlockEntity;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
@@ -46,6 +48,7 @@ public class LocalGrid implements ILoggingControl {
     // ----------------------------------------------
     private boolean isDirty = true;           // Whether grid needs rebuild
     private boolean blocksDirty = false;      // Whether blocks have changed
+    private volatile boolean renderDataInvalidated = false;
 
     // ----------------------------------------------
     // COMPONENTS
@@ -119,6 +122,9 @@ public class LocalGrid implements ILoggingControl {
             // Apply physics effects
             physicsComponent.applyVelocityDamping();
 
+            // Tick block entities
+            tickBlockEntities();
+
             // Rebuild if necessary
             if (isDirty) {
                 rebuildPhysics();
@@ -151,6 +157,10 @@ public class LocalGrid implements ILoggingControl {
      */
     public void rebuildPhysics() {
         physicsComponent.rebuildPhysics(blocks, blockMerger);
+
+        // PERFORMANCE: Flag that cached render data is now invalid
+        renderDataInvalidated = true;
+
         markClean();
     }
 
@@ -296,6 +306,41 @@ public class LocalGrid implements ILoggingControl {
         return velocityAtPoint;
     }
 
+
+    /**
+     * Ticks all block entities in this grid.
+     */
+    private void tickBlockEntities() {
+        for (Map.Entry<BlockPos, LocalBlock> entry : blocks.entrySet()) {
+            LocalBlock localBlock = entry.getValue();
+            if (localBlock.hasBlockEntity()) {
+                Object blockEntity = localBlock.getBlockEntity();
+
+                // Tick grid block entities
+                if (blockEntity instanceof GridBlockEntity gridBlockEntity) {
+                    // Create a virtual world position for the block entity
+                    Vector3f worldPos = new Vector3f();
+                    Transform gridTransform = new Transform();
+                    getRigidBody().getWorldTransform(gridTransform);
+                    gridTransform.origin.get(worldPos);
+
+                    BlockPos virtualWorldPos = new BlockPos(
+                            (int) Math.floor(worldPos.x + entry.getKey().getX()),
+                            (int) Math.floor(worldPos.y + entry.getKey().getY()),
+                            (int) Math.floor(worldPos.z + entry.getKey().getZ())
+                    );
+
+                    try {
+                        gridBlockEntity.tick(world, virtualWorldPos, localBlock.getState());
+                    } catch (Exception e) {
+                        SLogger.log(this, "Error ticking grid block entity at " + entry.getKey() + ": " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+    }
+
     // ----------------------------------------------
     // GETTERS / SETTERS
     // ----------------------------------------------
@@ -433,5 +478,13 @@ public class LocalGrid implements ILoggingControl {
      */
     GridBlockMerger getBlockMerger() {
         return blockMerger;
+    }
+
+    public boolean isRenderDataInvalidated() {
+        return renderDataInvalidated;
+    }
+
+    public void clearRenderDataInvalidated() {
+        renderDataInvalidated = false;
     }
 }

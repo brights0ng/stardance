@@ -1,10 +1,12 @@
 package net.starlight.stardance.interaction;
 
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.block.BlockState;
+import net.minecraft.block.*;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemStack;
+import net.minecraft.screen.SimpleNamedScreenHandlerFactory;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
@@ -24,6 +26,8 @@ import java.util.Map;
 import java.util.Set;
 
 import static net.starlight.stardance.Stardance.engineManager;
+import static net.starlight.stardance.interaction.GridChestScreenHandler.getOrCreateChestBlockEntity;
+import static net.starlight.stardance.interaction.GridFurnaceScreenHandler.getOrCreateFurnaceBlockEntity;
 
 /**
  * Handler for interacting with LocalGrids using Minecraft's built-in block placement logic.
@@ -38,23 +42,323 @@ public class GridInteractionHandler implements ILoggingControl {
      * Main entry point, called when a player uses a block.
      */
     public ActionResult onUseBlock(PlayerEntity player, Hand hand) {
-        // Only proceed on the server side to avoid double placement
+        // Only proceed on the server side
         if (player.getEntityWorld().isClient) {
             return ActionResult.PASS;
         }
 
-        // Only handle main hand to avoid double triggers from off-hand
+        // Only handle main hand to avoid double triggers
         if (hand != Hand.MAIN_HAND) {
             return ActionResult.PASS;
         }
 
+        SLogger.log(this, "=== onUseBlock START === Player: " + player.getName().getString() +
+                ", Sneaking: " + player.isSneaking());
+
         ItemStack heldItem = player.getStackInHand(hand);
-        if (!(heldItem.getItem() instanceof BlockItem)) {
-            return ActionResult.PASS; // Not holding a block, ignore
+        boolean holdingBlockItem = heldItem.getItem() instanceof BlockItem;
+
+        // Check if player is looking at a grid block entity
+        GridBlockEntityInfo blockEntityInfo = getGridBlockEntityPlayerIsLookingAt(player);
+
+        if (blockEntityInfo != null) {
+            SLogger.log(this, "Player is looking at grid block entity: " +
+                    blockEntityInfo.blockState.getBlock().getClass().getSimpleName() +
+                    " at " + blockEntityInfo.gridLocalPos);
+
+            // If NOT sneaking, prioritize block entity interaction
+            if (!player.isSneaking()) {
+                SLogger.log(this, "Player not sneaking - prioritizing block entity interaction");
+                boolean handled = handleGridBlockInteraction(player, hand, blockEntityInfo);
+                if (handled) {
+                    return ActionResult.SUCCESS;
+                }
+            } else {
+                SLogger.log(this, "Player is sneaking - checking for item use first");
+            }
         }
 
-        boolean handled = handleGridInteraction(player, hand, (BlockItem) heldItem.getItem());
-        return handled ? ActionResult.SUCCESS : ActionResult.PASS;
+        // If sneaking, no block entity found, or block entity interaction failed,
+        // try to use the held item (block placement)
+        if (holdingBlockItem) {
+            SLogger.log(this, "Attempting block placement with held item");
+            boolean handled = handleGridInteraction(player, hand, (BlockItem) heldItem.getItem());
+            if (handled) {
+                return ActionResult.SUCCESS;
+            }
+        }
+
+        // If we have a block entity but item use failed (or no item),
+        // try block entity interaction as fallback
+        if (blockEntityInfo != null && player.isSneaking()) {
+            SLogger.log(this, "Fallback to block entity interaction after failed item use");
+            boolean handled = handleGridBlockInteraction(player, hand, blockEntityInfo);
+            if (handled) {
+                return ActionResult.SUCCESS;
+            }
+        }
+
+        SLogger.log(this, "No grid interaction handled");
+        return ActionResult.PASS;
+    }
+
+    /**
+     * Handles player interaction with existing blocks on grids (right-clicking).
+     * Overloaded version that takes GridBlockEntityInfo.
+     */
+    public boolean handleGridBlockInteraction(PlayerEntity player, Hand hand, GridBlockEntityInfo blockEntityInfo) {
+        SLogger.log(this, "=== handleGridBlockInteraction START (with BlockEntityInfo) ===");
+
+        LocalGrid grid = blockEntityInfo.grid;
+        BlockPos blockPos = blockEntityInfo.gridLocalPos;
+        BlockState blockState = blockEntityInfo.blockState;
+        Block block = blockState.getBlock();
+
+        SLogger.log(this, "Interacting with block entity: " + block.getClass().getSimpleName() + " at " + blockPos);
+
+        // Check for specific block types that need special handling
+        if (block instanceof CraftingTableBlock) {
+            SLogger.log(this, "Detected crafting table - using special handler");
+            return handleCraftingTableInteraction(player, hand, grid, blockPos, blockState);
+        } else if (block instanceof FurnaceBlock) {
+            SLogger.log(this, "Detected furnace - using special handler");
+            return handleFurnaceInteraction(player, hand, grid, blockPos, blockState);
+        } else if (block instanceof ChestBlock) {
+            SLogger.log(this, "Detected chest - using special handler");
+            return handleChestInteraction(player, hand, grid, blockPos, blockState);
+        } else if (block instanceof AnvilBlock) {
+            SLogger.log(this, "Detected anvil - using special handler");
+            return handleAnvilInteraction(player, hand, grid, blockPos, blockState);
+        }
+
+        // Default interaction
+        SLogger.log(this, "Using default block interaction");
+        return performDefaultBlockInteraction(player, hand, grid, blockPos, blockState, blockEntityInfo.raycastResult);
+    }
+
+    /**
+     * Original method - kept for compatibility.
+     */
+    public boolean handleGridBlockInteraction(PlayerEntity player, Hand hand) {
+        SLogger.log(this, "=== handleGridBlockInteraction START (legacy) ===");
+
+        // Get the player's look information
+        Vec3d eyePos = player.getEyePos();
+        Vec3d lookVec = player.getRotationVec(1.0F);
+        Vec3d reachPoint = eyePos.add(lookVec.multiply(playerReachDistance));
+
+        SLogger.log(this, "Attempting block interaction - eyePos: " + eyePos + ", lookVec: " + lookVec);
+
+        // Find grid in player's view
+        LocalGrid grid = getGridPlayerIsLookingAt(player);
+        if (grid == null) {
+            SLogger.log(this, "No grid found for block interaction.");
+            return false;
+        }
+
+        SLogger.log(this, "Found grid for interaction: " + grid.getGridId());
+
+        // Perform raycast to find the block being looked at
+        GridRaycastResult result = performGridRaycast(eyePos, reachPoint, grid);
+        if (result == null) {
+            SLogger.log(this, "No block hit for interaction.");
+            return false;
+        }
+
+        // Get the block that was hit
+        BlockPos blockPos = result.getBlockPosition();
+        LocalBlock localBlock = grid.getBlocks().get(blockPos);
+        if (localBlock == null) {
+            SLogger.log(this, "No LocalBlock found at position: " + blockPos);
+            return false;
+        }
+
+        BlockState blockState = localBlock.getState();
+        Block block = blockState.getBlock();
+        SLogger.log(this, "Interacting with block: " + block.getClass().getSimpleName() + " at " + blockPos);
+
+        // Check for specific block types that need special handling
+        if (block instanceof CraftingTableBlock) {
+            SLogger.log(this, "Detected crafting table - using special handler");
+            return handleCraftingTableInteraction(player, hand, grid, blockPos, blockState);
+        } else if (block instanceof FurnaceBlock) {
+            SLogger.log(this, "Detected furnace - using special handler");
+            return handleFurnaceInteraction(player, hand, grid, blockPos, blockState);
+        } else if (block instanceof ChestBlock) {
+            SLogger.log(this, "Detected chest - using special handler");
+            return handleChestInteraction(player, hand, grid, blockPos, blockState);
+        } else if (block instanceof AnvilBlock) {
+            SLogger.log(this, "Detected anvil - using special handler");
+            return handleAnvilInteraction(player, hand, grid, blockPos, blockState);
+        }
+
+        // Default interaction
+        SLogger.log(this, "Using default block interaction");
+        return performDefaultBlockInteraction(player, hand, grid, blockPos, blockState, result);
+    }
+
+    private boolean handleCraftingTableInteraction(PlayerEntity player, Hand hand, LocalGrid grid,
+                                                   BlockPos gridLocalPos, BlockState blockState) {
+        SLogger.log(this, "=== handleCraftingTableInteraction START ===");
+        SLogger.log(this, "Player: " + player.getName().getString());
+        SLogger.log(this, "Grid: " + grid.getGridId());
+        SLogger.log(this, "Grid local position: " + gridLocalPos);
+        SLogger.log(this, "Block state: " + blockState);
+
+        try {
+            // Create a custom crafting screen handler that doesn't validate position
+            SLogger.log(this, "Opening custom crafting screen...");
+
+            player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
+                    (syncId, inventory, playerEntity) -> {
+                        SLogger.log(this, "Creating GridCraftingScreenHandler with syncId=" + syncId);
+                        return new GridCraftingScreenHandler(syncId, inventory, grid, gridLocalPos);
+                    },
+                    Text.translatable("container.crafting")
+            ));
+
+            SLogger.log(this, "Successfully opened crafting table from grid block");
+            return true;
+
+        } catch (Exception e) {
+            SLogger.log(this, "ERROR in handleCraftingTableInteraction: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private boolean handleFurnaceInteraction(PlayerEntity player, Hand hand, LocalGrid grid,
+                                             BlockPos gridLocalPos, BlockState blockState) {
+        SLogger.log(this, "=== handleFurnaceInteraction START ===");
+        SLogger.log(this, "Player: " + player.getName().getString());
+        SLogger.log(this, "Grid: " + grid.getGridId());
+        SLogger.log(this, "Grid local position: " + gridLocalPos);
+
+        try {
+            player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
+                    (syncId, inventory, playerEntity) -> {
+                        SLogger.log(this, "Creating GridFurnaceScreenHandler with syncId=" + syncId);
+                        return new GridFurnaceScreenHandler(syncId, inventory, grid, gridLocalPos, getOrCreateFurnaceBlockEntity(grid, gridLocalPos));
+                    },
+                    Text.translatable("container.furnace")
+            ));
+
+            SLogger.log(this, "Successfully opened furnace from grid block");
+            return true;
+
+        } catch (Exception e) {
+            SLogger.log(this, "ERROR in handleFurnaceInteraction: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private boolean handleChestInteraction(PlayerEntity player, Hand hand, LocalGrid grid,
+                                           BlockPos gridLocalPos, BlockState blockState) {
+        SLogger.log(this, "=== handleChestInteraction START ===");
+        SLogger.log(this, "Player: " + player.getName().getString());
+        SLogger.log(this, "Grid: " + grid.getGridId());
+        SLogger.log(this, "Grid local position: " + gridLocalPos);
+
+        try {
+            player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
+                    (syncId, inventory, playerEntity) -> {
+                        SLogger.log(this, "Creating GridChestScreenHandler with syncId=" + syncId);
+                        return new GridChestScreenHandler(syncId, inventory, grid, gridLocalPos, getOrCreateChestBlockEntity(grid, gridLocalPos));
+                    },
+                    Text.translatable("container.chest")
+            ));
+
+            SLogger.log(this, "Successfully opened chest from grid block");
+            return true;
+
+        } catch (Exception e) {
+            SLogger.log(this, "ERROR in handleChestInteraction: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private boolean handleAnvilInteraction(PlayerEntity player, Hand hand, LocalGrid grid,
+                                           BlockPos gridLocalPos, BlockState blockState) {
+        SLogger.log(this, "=== handleAnvilInteraction START ===");
+        SLogger.log(this, "Player: " + player.getName().getString());
+        SLogger.log(this, "Grid: " + grid.getGridId());
+        SLogger.log(this, "Grid local position: " + gridLocalPos);
+
+        try {
+            player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
+                    (syncId, inventory, playerEntity) -> {
+                        SLogger.log(this, "Creating GridAnvilScreenHandler with syncId=" + syncId);
+                        return new GridAnvilScreenHandler(syncId, inventory, grid, gridLocalPos);
+                    },
+                    Text.translatable("container.repair")
+            ));
+
+            SLogger.log(this, "Successfully opened anvil from grid block");
+            return true;
+
+        } catch (Exception e) {
+            SLogger.log(this, "ERROR in handleAnvilInteraction: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private boolean performDefaultBlockInteraction(PlayerEntity player, Hand hand, LocalGrid grid,
+                                                   BlockPos gridLocalPos, BlockState blockState,
+                                                   GridRaycastResult raycastResult) {
+        SLogger.log(this, "=== performDefaultBlockInteraction START ===");
+
+        // Get grid's world position
+        Vector3f worldPos = new Vector3f();
+        Transform gridTransform = new Transform();
+        grid.getRigidBody().getWorldTransform(gridTransform);
+        gridTransform.origin.get(worldPos);
+
+        // Calculate virtual world position for the interaction
+        BlockPos virtualWorldPos = new BlockPos(
+                (int) Math.floor(worldPos.x + gridLocalPos.getX()),
+                (int) Math.floor(worldPos.y + gridLocalPos.getY()),
+                (int) Math.floor(worldPos.z + gridLocalPos.getZ())
+        );
+
+        SLogger.log(this, "Virtual world position for interaction: " + virtualWorldPos);
+
+        try {
+            // Create a proper BlockHitResult for the interaction
+            BlockHitResult hitResult = new BlockHitResult(
+                    raycastResult.getHitPosition(),
+                    raycastResult.getHitFace(),
+                    virtualWorldPos,
+                    false
+            );
+
+            SLogger.log(this, "Calling blockState.onUse()...");
+
+            // Use the actual world, but with our virtual position
+            ActionResult result = blockState.onUse(
+                    player.getWorld(),
+                    player,
+                    hand,
+                    hitResult
+            );
+
+            SLogger.log(this, "blockState.onUse() returned: " + result);
+
+            if (result.isAccepted()) {
+                SLogger.log(this, "Block interaction successful: " + result);
+                return true;
+            } else {
+                SLogger.log(this, "Block interaction not handled by block: " + result);
+                return false;
+            }
+
+        } catch (Exception e) {
+            SLogger.log(this, "Error during default block interaction: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
     }
 
     /**
@@ -453,9 +757,6 @@ public class GridInteractionHandler implements ILoggingControl {
         return closestFace;
     }
 
-    /**
-     * Actually place the block in the LocalGrid's block map if possible.
-     */
     public void placeBlockInGrid(PlayerEntity player, LocalGrid grid,
                                  GridRaycastResult result, BlockItem blockItem) {
         BlockPos hitPosition = result.getBlockPosition();
@@ -470,6 +771,23 @@ public class GridInteractionHandler implements ILoggingControl {
         if (!grid.getBlocks().containsKey(placePosition)) {
             BlockState blockState = blockItem.getBlock().getDefaultState();
             LocalBlock localBlock = new LocalBlock(placePosition, blockState);
+
+            // Create block entity for blocks that need them
+            Block block = blockState.getBlock();
+            if (block instanceof FurnaceBlock) {
+                GridFurnaceBlockEntity furnaceEntity = new GridFurnaceBlockEntity(grid, placePosition);
+                localBlock.setBlockEntity(furnaceEntity);
+                SLogger.log(this, "Created furnace block entity for new furnace at " + placePosition);
+            } else if (block instanceof ChestBlock) {
+                GridChestBlockEntity chestEntity = new GridChestBlockEntity(grid, placePosition);
+                localBlock.setBlockEntity(chestEntity);
+                SLogger.log(this, "Created chest block entity for new chest at " + placePosition);
+            } else if (block instanceof CraftingTableBlock) {
+                GridCraftingBlockEntity craftingEntity = new GridCraftingBlockEntity(grid, placePosition);
+                localBlock.setBlockEntity(craftingEntity);
+                SLogger.log(this, "Created crafting block entity for new crafting table at " + placePosition);
+            }
+            // Add other block entity types here as needed
 
             grid.addBlock(localBlock);
 
@@ -565,5 +883,73 @@ public class GridInteractionHandler implements ILoggingControl {
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
         return false;
+    }
+
+    /**
+     * Data class for block entity information.
+     */
+    public static class GridBlockEntityInfo {
+        public final LocalGrid grid;
+        public final BlockPos gridLocalPos;
+        public final BlockState blockState;
+        public final GridRaycastResult raycastResult;
+
+        public GridBlockEntityInfo(LocalGrid grid, BlockPos gridLocalPos, BlockState blockState, GridRaycastResult raycastResult) {
+            this.grid = grid;
+            this.gridLocalPos = gridLocalPos;
+            this.blockState = blockState;
+            this.raycastResult = raycastResult;
+        }
+    }
+
+    /**
+     * Checks if the player is looking at a block entity on a grid.
+     * Returns information about the block entity if found.
+     */
+    public GridBlockEntityInfo getGridBlockEntityPlayerIsLookingAt(PlayerEntity player) {
+        // Get the player's look information
+        Vec3d eyePos = player.getEyePos();
+        Vec3d lookVec = player.getRotationVec(1.0F);
+        Vec3d reachPoint = eyePos.add(lookVec.multiply(playerReachDistance));
+
+        // Find grid in player's view
+        LocalGrid grid = getGridPlayerIsLookingAt(player);
+        if (grid == null) {
+            return null;
+        }
+
+        // Perform raycast to find the block being looked at
+        GridRaycastResult result = performGridRaycast(eyePos, reachPoint, grid);
+        if (result == null) {
+            return null;
+        }
+
+        // Get the block that was hit
+        BlockPos blockPos = result.getBlockPosition();
+        LocalBlock localBlock = grid.getBlocks().get(blockPos);
+        if (localBlock == null) {
+            return null;
+        }
+
+        BlockState blockState = localBlock.getState();
+        Block block = blockState.getBlock();
+
+        // Check if this block type has a block entity interaction
+        if (isBlockEntityType(block)) {
+            return new GridBlockEntityInfo(grid, blockPos, blockState, result);
+        }
+
+        return null;
+    }
+
+    /**
+     * Checks if a block type should have block entity interaction priority.
+     */
+    private boolean isBlockEntityType(Block block) {
+        return block instanceof CraftingTableBlock ||
+                block instanceof FurnaceBlock ||
+                block instanceof ChestBlock ||
+                block instanceof AnvilBlock;
+        // Add more block entity types here as needed
     }
 }

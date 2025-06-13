@@ -108,27 +108,6 @@ public class PhysicsEngine implements ILoggingControl {
         // Update chunk-based data
         subchunkManager.updateDirtySubchunks();
 
-        // In PhysicsEngine.tick method, before stepSimulation
-        // Add this debugging code to identify problematic collisions
-//        Set<String> shapeTypeCombinations = new HashSet<>();
-//        int numManifolds = dispatcher.getNumManifolds();
-//        for (int i = 0; i < numManifolds; i++) {
-//            PersistentManifold manifold = dispatcher.getManifoldByIndexInternal(i);
-//            CollisionObject bodyA = (CollisionObject) manifold.getBody0();
-//            CollisionObject bodyB = (CollisionObject) manifold.getBody1();
-//
-//            String typeA = bodyA.getCollisionShape().getClass().getSimpleName();
-//            String typeB = bodyB.getCollisionShape().getClass().getSimpleName();
-//            String combo = typeA + " vs " + typeB;
-//
-//            shapeTypeCombinations.add(combo);
-//        }
-//
-//        for (String combo : shapeTypeCombinations) {
-//            SLogger.log(this, "Shape combination: " + combo);
-//        }
-
-
         // Step the simulation
         stepSimulation(TICK_DELTA, MAX_SUB_STEPS);
 

@@ -31,6 +31,7 @@ public class ClientLocalGrid implements ILoggingControl {
     private Quat4f previousRotation = new Quat4f(0, 0, 0, 1);
     private Quat4f currentRotation = new Quat4f(0, 0, 0, 1);
     private Vector3f centroid = new Vector3f();
+    private Vector3f previousCentroid = new Vector3f();
 
     // Server time tracking
     private long previousServerTick;
@@ -49,6 +50,7 @@ public class ClientLocalGrid implements ILoggingControl {
     // State flags
     private boolean isInitialized = false;
     private boolean needsBlockUpdate = false;
+    private boolean centroidChanged = false;
 
     // Debug
     private boolean verbose = false;
@@ -67,6 +69,16 @@ public class ClientLocalGrid implements ILoggingControl {
      * to ensure they're applied in the correct order.
      */
     public void updateState(Vector3f newPosition, Quat4f newRotation, Vector3f newCentroid, long serverTick) {
+        // Check if centroid has changed significantly
+        if (!centroidEquals(centroid, newCentroid)) {
+            centroidChanged = true;
+
+            if (verbose) {
+                SLogger.log(this, "Centroid changed from " + centroid + " to " + newCentroid +
+                        " for grid " + gridId);
+            }
+        }
+
         // Add this update to the pending queue
         StateUpdate update = new StateUpdate(
                 new Vector3f(newPosition),
@@ -84,6 +96,14 @@ public class ClientLocalGrid implements ILoggingControl {
         lastUpdateTimeMs = System.currentTimeMillis();
     }
 
+    // Add helper method to compare centroids with epsilon
+    private boolean centroidEquals(Vector3f c1, Vector3f c2) {
+        float epsilon = 0.001f;
+        return Math.abs(c1.x - c2.x) < epsilon &&
+                Math.abs(c1.y - c2.y) < epsilon &&
+                Math.abs(c1.z - c2.z) < epsilon;
+    }
+
     /**
      * Process all pending updates in sequence order.
      */
@@ -97,10 +117,38 @@ public class ClientLocalGrid implements ILoggingControl {
             currentPosition.set(update.position);
             previousRotation.set(update.rotation);
             currentRotation.set(update.rotation);
+
+            // PERFORMANCE FIX: Handle centroid changes immediately
+            if (centroidChanged) {
+                // When centroid changes, we need to reset interpolation to prevent warping
+                previousPosition.set(currentPosition);
+                previousRotation.set(currentRotation);
+                previousCentroid.set(centroid);
+
+                if (verbose) {
+                    SLogger.log(this, "Reset interpolation due to centroid change for grid " + gridId);
+                }
+
+                centroidChanged = false;
+            }
+
             centroid.set(update.centroid);
+
+            if (!centroidEquals(previousCentroid, update.centroid)) {
+                // Force immediate position update - no interpolation
+                previousPosition.set(update.position);
+                previousRotation.set(update.rotation);
+                previousCentroid.set(update.centroid);
+
+                if (verbose) {
+                    SLogger.log(this, "Immediate centroid fix applied for grid " + gridId);
+                }
+            }
 
             previousServerTick = update.serverTick;
             currentServerTick = update.serverTick;
+
+            lastUpdateTimeMs = System.currentTimeMillis();
 
             isInitialized = true;
 
@@ -222,6 +270,7 @@ public class ClientLocalGrid implements ILoggingControl {
     /**
      * Renders the grid with interpolation based on server tick delta.
      */
+    // In render(), before calculating interpolation:
     public void render(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
                        float partialServerTick, long currentWorldTick) {
         if (!isInitialized || blocks.isEmpty()) {
@@ -230,7 +279,19 @@ public class ClientLocalGrid implements ILoggingControl {
 
         BlockRenderManager blockRenderer = MinecraftClient.getInstance().getBlockRenderManager();
 
-        // CRITICAL FIX: Calculate our own interpolation factor based on time since last update
+        // PERFORMANCE FIX: Check for centroid changes that would cause warping
+        if (!centroidEquals(previousCentroid, centroid)) {
+            // Centroid just changed - reset interpolation
+            previousPosition.set(currentPosition);
+            previousRotation.set(currentRotation);
+            previousCentroid.set(centroid);
+
+            if (verbose) {
+                SLogger.log(this, "Render-time centroid fix applied for grid " + gridId);
+            }
+        }
+
+        // Calculate our own interpolation factor
         float tickDelta = calculateInterpolationFactor();
 
         // Save original matrix state

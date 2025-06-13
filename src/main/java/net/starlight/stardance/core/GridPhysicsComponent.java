@@ -453,6 +453,8 @@ class GridPhysicsComponent {
             this.totalMass = massAcc;
             this.centroid = centroidAcc;
 
+            grid.getRenderComponent().updateRenderState(this.rigidBody);
+
             // Separate blocks into simple and complex for different processing
             Map<BlockPos, LocalBlock> simpleBlocks = new HashMap<>();
             Map<BlockPos, LocalBlock> complexBlocks = new HashMap<>();
