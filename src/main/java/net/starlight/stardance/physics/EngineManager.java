@@ -1,10 +1,16 @@
 package net.starlight.stardance.physics;
 
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.utils.ILoggingControl;
+import org.joml.Vector3f;
 
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static net.starlight.stardance.Stardance.serverInstance;
@@ -103,5 +109,45 @@ public class EngineManager implements ILoggingControl {
                 engine.tick(world);
             }
         }
+    }
+
+    /**
+     * Utility method to find which grid a player is looking at.
+     */
+    public LocalGrid getGridPlayerIsLookingAt(PlayerEntity player) {
+        // Reuse the detection logic
+        Set<LocalGrid> grids = getEngine(player.getWorld()).getGrids();
+        float playerReachDistance = 4.5f;
+
+        Vec3d eyePos = player.getEyePos();
+        Vec3d lookVec = player.getRotationVec(1.0F);
+        Vec3d reachPoint = eyePos.add(lookVec.multiply(playerReachDistance));
+
+        for (LocalGrid grid : grids) {
+            if (gridIntersectsRay(grid, eyePos, reachPoint)) {
+                return grid;
+            }
+        }
+        return null;
+    }
+
+    private boolean gridIntersectsRay(LocalGrid grid, Vec3d start, Vec3d end) {
+        javax.vecmath.Vector3f minAabb = new javax.vecmath.Vector3f();
+        javax.vecmath.Vector3f maxAabb = new javax.vecmath.Vector3f();
+        grid.getAABB(minAabb, maxAabb);
+
+        Box gridBox = new Box(minAabb.x, minAabb.y, minAabb.z,
+                maxAabb.x, maxAabb.y, maxAabb.z);
+
+        return gridBox.intersects(start, end);
+    }
+
+    /**
+     * Utility method for block breaking from static contexts.
+     */
+    public boolean breakGridBlock(PlayerEntity player) {
+        // You can create a static instance or delegate to the handler
+        // For now, let's keep it simple and delegate to the existing handler
+        return false; // Implement if needed
     }
 }
