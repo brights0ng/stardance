@@ -18,6 +18,7 @@ import net.starlight.stardance.network.GridNetwork;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.render.CollisionShapeRenderer;
 import net.starlight.stardance.render.DebugRenderer;
+import net.starlight.stardance.render.GridRenderingIntegration;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.KeybindRegistry;
 import net.starlight.stardance.utils.SLogger;
@@ -113,23 +114,50 @@ public class StardanceClient implements ClientModInitializer, ILoggingControl {
         ClientWorld clientWorld = MinecraftClient.getInstance().world;
         if (clientWorld == null) return;
 
-        // Get camera position
+        // Get camera position for culling and positioning
         Vec3d cameraPos = MinecraftClient.getInstance().gameRenderer.getCamera().getPos();
+
+        // Get matrix stack and vertex consumers from context
+        MatrixStack matrices = context.matrixStack();
+        VertexConsumerProvider vertexConsumers = context.consumers();
+
+        // Position the rendering relative to camera (standard Minecraft approach)
+        matrices.push();
+        matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+
+        try {
+            // === NEW VS2-STYLE GRIDSPACE RENDERING ===
+            // This replaces the old ClientGridManager approach
+            GridRenderingIntegration.renderAllGrids(matrices, vertexConsumers, cameraPos);
+
+            // OPTIONAL: Keep old rendering for comparison/fallback
+            // Comment out the line above and uncomment below to use old system
+            // renderGridsOldSystem(matrices, vertexConsumers, context);
+
+        } catch (Exception e) {
+            SLogger.log(this, "Error during grid rendering: " + e.getMessage());
+        } finally {
+            matrices.pop();
+        }
+    }
+
+    /**
+     * Old rendering system for fallback/comparison.
+     * Keep this method temporarily in case we need to switch back during testing.
+     */
+    @SuppressWarnings("unused")
+    private void renderGridsOldSystem(MatrixStack matrices, VertexConsumerProvider vertexConsumers, WorldRenderContext context) {
+        // Get the client world
+        ClientWorld clientWorld = MinecraftClient.getInstance().world;
+        if (clientWorld == null) return;
 
         // Calculate server partial tick
         float partialTick = context.tickDelta();
         long currentWorldTick = clientWorld.getTime();
 
-        // Position the rendering relative to camera
-        MatrixStack matrices = context.matrixStack();
-        matrices.push();
-        matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
-
-        // Render all client grids
+        // Render all client grids using old system
         ClientGridManager registry = ClientGridManager.getInstance();
-        registry.renderGrids(matrices, context.consumers(), partialTick, currentWorldTick);
-
-        matrices.pop();
+        registry.renderGrids(matrices, vertexConsumers, partialTick, currentWorldTick);
     }
 
     /**

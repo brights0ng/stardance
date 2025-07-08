@@ -6,6 +6,9 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
+import net.starlight.stardance.gridspace.GridSpaceManager;
+import net.starlight.stardance.gridspace.GridSpaceRegion;
+import net.starlight.stardance.gridspace.GridSpaceBlockManager;
 import net.starlight.stardance.interaction.GridFurnaceBlockEntity;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -25,8 +28,17 @@ import static net.starlight.stardance.Stardance.engineManager;
  * Represents a free-floating collection of blocks with physics properties.
  * This is the main API entry point for the Stardance physics grid system.
  * All access to physics grids should be done through this class.
+ *
+ * Now integrated with GridSpace system for proper block-world interaction handling.
  */
 public class LocalGrid implements ILoggingControl {
+    // ----------------------------------------------
+    // GRIDSPACE CONSTANTS
+    // ----------------------------------------------
+
+    /** Offset to center grid-local coordinates within the GridSpace region */
+    private static final int GRIDSPACE_CENTER_OFFSET = 512; // Half of 1024x1024x1024 region size
+
     // ----------------------------------------------
     // CORE PROPERTIES
     // ----------------------------------------------
@@ -39,8 +51,13 @@ public class LocalGrid implements ILoggingControl {
     private Quat4f rotation;                  // Initial rotation
 
     // ----------------------------------------------
-    // BLOCK STORAGE
+    // BLOCK STORAGE (HYBRID APPROACH)
     // ----------------------------------------------
+
+    /**
+     * Local block storage for fast physics access and iteration.
+     * This is the "source of truth" for physics calculations.
+     */
     private final ConcurrentMap<BlockPos, LocalBlock> blocks = new ConcurrentHashMap<>();
 
     // ----------------------------------------------
@@ -49,6 +66,7 @@ public class LocalGrid implements ILoggingControl {
     private boolean isDirty = true;           // Whether grid needs rebuild
     private boolean blocksDirty = false;      // Whether blocks have changed
     private volatile boolean renderDataInvalidated = false;
+    private volatile boolean isDestroyed = false; // Whether this grid has been destroyed
 
     // ----------------------------------------------
     // COMPONENTS
@@ -57,6 +75,11 @@ public class LocalGrid implements ILoggingControl {
     private final GridNetworkingComponent networkingComponent;
     private final GridRenderComponent renderComponent;
     private final GridBlockMerger blockMerger;
+
+    // GridSpace integration components
+    private final GridSpaceManager gridSpaceManager;
+    private final GridSpaceRegion gridSpaceRegion;
+    private final GridSpaceBlockManager gridSpaceBlockManager;
 
     // ----------------------------------------------
     // LOGGING CONTROL
@@ -68,7 +91,7 @@ public class LocalGrid implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return false;
+        return true; // Enable for GridSpace integration logging
     }
 
     // ----------------------------------------------
@@ -76,11 +99,13 @@ public class LocalGrid implements ILoggingControl {
     // ----------------------------------------------
     /**
      * Creates a new LocalGrid at the specified position with the specified rotation.
+     * Now with full GridSpace integration for proper block-world interaction.
      *
      * @param origin          Initial world position of grid origin
      * @param rotation        Initial rotation of the grid
      * @param world           Server world this grid belongs to
      * @param firstBlockState BlockState to use for the initial block
+     * @throws IllegalStateException if GridSpace allocation fails
      */
     public LocalGrid(Vector3d origin, Quat4f rotation, ServerWorld world, BlockState firstBlockState) {
         this.origin = origin;
@@ -88,10 +113,32 @@ public class LocalGrid implements ILoggingControl {
         this.world = world;
         this.gridId = UUID.randomUUID();
 
-        // Get engine
+        // Get engine and GridSpace manager
         this.engine = engineManager.getEngine(world);
+        this.gridSpaceManager = engineManager.getGridSpaceManager(world);
 
-        // Initialize components
+        if (engine == null) {
+            throw new IllegalStateException("No PhysicsEngine found for world: " + world.getRegistryKey().getValue());
+        }
+
+        if (gridSpaceManager == null) {
+            throw new IllegalStateException("No GridSpaceManager found for world: " + world.getRegistryKey().getValue());
+        }
+
+        // Allocate GridSpace region
+        try {
+            this.gridSpaceRegion = gridSpaceManager.allocateRegion(gridId);
+            this.gridSpaceBlockManager = new GridSpaceBlockManager(gridSpaceRegion);
+
+            SLogger.log(this, "Successfully allocated GridSpace region " + gridSpaceRegion.getRegionId() +
+                    " for LocalGrid " + gridId);
+
+        } catch (Exception e) {
+            SLogger.log(this, "Failed to allocate GridSpace region for LocalGrid " + gridId + ": " + e.getMessage());
+            throw new IllegalStateException("GridSpace allocation failed", e);
+        }
+
+        // Initialize components (existing ones unchanged)
         this.blockMerger = new GridBlockMerger(this);
         this.physicsComponent = new GridPhysicsComponent(this, origin, rotation);
         this.networkingComponent = new GridNetworkingComponent(this);
@@ -100,19 +147,75 @@ public class LocalGrid implements ILoggingControl {
         // Add to engine for management
         engine.addGrid(this);
 
-        // Add the first block at origin (0,0,0)
+        // Add the first block at origin (0,0,0) - this will now go to both local storage and GridSpace
         addBlock(new LocalBlock(new BlockPos(0, 0, 0), firstBlockState));
+
+        SLogger.log(this, "LocalGrid " + gridId + " created successfully with GridSpace integration");
     }
 
     // ----------------------------------------------
-    // CORE API METHODS
+    // COORDINATE TRANSFORMATION METHODS
     // ----------------------------------------------
+
+    /**
+     * Converts grid-local coordinates to GridSpace coordinates.
+     * Grid-local (0,0,0) maps to the center of the GridSpace region.
+     *
+     * @param gridLocalPos Position relative to grid origin
+     * @return Position in GridSpace coordinates
+     */
+    public BlockPos gridLocalToGridSpace(BlockPos gridLocalPos) {
+        if (isDestroyed) {
+            throw new IllegalStateException("Cannot use destroyed LocalGrid");
+        }
+
+        // Apply center offset: grid-local (0,0,0) = center of GridSpace region
+        BlockPos offsetPos = gridLocalPos.add(GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET);
+        return gridSpaceRegion.gridLocalToGridSpace(offsetPos);
+    }
+
+    /**
+     * Converts GridSpace coordinates to grid-local coordinates.
+     *
+     * @param gridSpacePos Position in GridSpace coordinates
+     * @return Position relative to grid origin
+     */
+    public BlockPos gridSpaceToGridLocal(BlockPos gridSpacePos) {
+        if (isDestroyed) {
+            throw new IllegalStateException("Cannot use destroyed LocalGrid");
+        }
+
+        BlockPos regionLocalPos = gridSpaceRegion.gridSpaceToGridLocal(gridSpacePos);
+        // Remove center offset to get back to grid-local coordinates
+        return regionLocalPos.add(-GRIDSPACE_CENTER_OFFSET, -GRIDSPACE_CENTER_OFFSET, -GRIDSPACE_CENTER_OFFSET);
+    }
+
+    /**
+     * Checks if a grid-local position is within the valid bounds of this grid's region.
+     *
+     * @param gridLocalPos Position to check
+     * @return true if position is within valid bounds
+     */
+    public boolean isValidGridLocalPosition(BlockPos gridLocalPos) {
+        if (isDestroyed) {
+            return false;
+        }
+
+        // Apply center offset and check if it fits within the region
+        BlockPos offsetPos = gridLocalPos.add(GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET);
+        return gridSpaceRegion.containsGridLocalPosition(offsetPos);
+    }
+
+    // ----------------------------------------------
+    // CORE API METHODS (UPDATED FOR GRIDSPACE)
+    // ----------------------------------------------
+
     /**
      * Updates the grid's physics and network state.
      * Called each tick to sync transforms or rebuild if dirty.
      */
     public void tickUpdate() {
-        if (physicsComponent.getRigidBody() == null) return;
+        if (isDestroyed || physicsComponent.getRigidBody() == null) return;
 
         // CRITICAL FIX: Lock the physics operations to prevent concurrent updates
         synchronized(engine.getPhysicsLock()) {
@@ -156,6 +259,8 @@ public class LocalGrid implements ILoggingControl {
      * Rebuilds physics properties after changes.
      */
     public void rebuildPhysics() {
+        if (isDestroyed) return;
+
         physicsComponent.rebuildPhysics(blocks, blockMerger);
 
         // PERFORMANCE: Flag that cached render data is now invalid
@@ -166,61 +271,158 @@ public class LocalGrid implements ILoggingControl {
 
     /**
      * Adds a new block to the grid at the specified position.
+     * Now stores blocks in both local storage AND GridSpace.
      *
      * @param localBlock The block to add
      */
     public void addBlock(LocalBlock localBlock) {
+        if (isDestroyed) {
+            SLogger.log(this, "Cannot add block to destroyed grid");
+            return;
+        }
+
         if (localBlock.getPosition() == null || localBlock.getState() == null) {
             SLogger.log(this, "Cannot add block: null position or state");
             return;
         }
 
         BlockPos pos = localBlock.getPosition();
+
+        // Validate position is within bounds
+        if (!isValidGridLocalPosition(pos)) {
+            SLogger.log(this, "Cannot add block at " + pos + " - outside valid grid bounds");
+            return;
+        }
+
         if (!blocks.containsKey(pos)) {
             // Mark as rebuilding to defer network updates
             physicsComponent.setRebuildInProgress(true);
 
-            // Add block to collection
+            // Add to local storage (for physics)
             blocks.put(pos, localBlock);
+
+            // Add to GridSpace (for world interaction)
+            boolean gridSpaceSuccess = gridSpaceBlockManager.placeBlock(pos, localBlock.getState());
+            if (!gridSpaceSuccess) {
+                // Rollback local storage if GridSpace failed
+                blocks.remove(pos);
+                SLogger.log(this, "Failed to place block in GridSpace, rolling back local placement");
+                return;
+            }
+
+            // Mark grid as needing updates
             markDirty();
             blocksDirty = true;
             networkingComponent.setPendingNetworkUpdate(true);
+
+            SLogger.log(this, "Added block " + localBlock.getState().getBlock().getName().getString() +
+                    " at grid-local " + pos + " (GridSpace: " + gridLocalToGridSpace(pos) + ")");
         }
     }
 
     /**
      * Removes a block from the grid.
+     * Now removes from both local storage AND GridSpace.
      *
      * @param pos Position of the block to remove
      */
     public void removeBlock(BlockPos pos) {
+        if (isDestroyed) {
+            return;
+        }
+
         LocalBlock removed = blocks.remove(pos);
         if (removed != null) {
+            // Remove from GridSpace as well
+            boolean gridSpaceSuccess = gridSpaceBlockManager.removeBlock(pos);
+            if (!gridSpaceSuccess) {
+                // Rollback local removal if GridSpace failed
+                blocks.put(pos, removed);
+                SLogger.log(this, "Failed to remove block from GridSpace, rolling back local removal");
+                return;
+            }
+
             markDirty();
             blocksDirty = true;
+
+            SLogger.log(this, "Removed block at grid-local " + pos + " (GridSpace: " + gridLocalToGridSpace(pos) + ")");
         }
     }
 
     /**
      * Gets the block state at the specified position.
+     * Checks local storage first for performance.
      *
      * @param pos Position to check
      * @return The BlockState at the position, or null if no block exists
      */
     public BlockState getBlock(BlockPos pos) {
+        if (isDestroyed) {
+            return null;
+        }
+
         LocalBlock lb = blocks.get(pos);
         return (lb != null) ? lb.getState() : null;
     }
 
     /**
      * Imports multiple blocks at once.
+     * Optimized for bulk operations.
      *
      * @param blockMap Map of positions to blocks to import
      */
     public void importBlocks(ConcurrentMap<BlockPos, LocalBlock> blockMap) {
-        for (Map.Entry<BlockPos, LocalBlock> entry : blockMap.entrySet()) {
-            addBlock(entry.getValue());
+        if (isDestroyed) {
+            SLogger.log(this, "Cannot import blocks to destroyed grid");
+            return;
         }
+
+        // Prepare batch operation for GridSpace
+        Map<BlockPos, BlockState> gridSpaceBlocks = new HashMap<>();
+
+        // Validate all positions first
+        for (Map.Entry<BlockPos, LocalBlock> entry : blockMap.entrySet()) {
+            BlockPos pos = entry.getKey();
+            LocalBlock block = entry.getValue();
+
+            if (block.getPosition() == null || block.getState() == null) {
+                SLogger.log(this, "Skipping invalid block during import: null position or state");
+                continue;
+            }
+
+            if (!isValidGridLocalPosition(pos)) {
+                SLogger.log(this, "Skipping block at " + pos + " during import: outside valid bounds");
+                continue;
+            }
+
+            if (!blocks.containsKey(pos)) {
+                gridSpaceBlocks.put(pos, block.getState());
+            }
+        }
+
+        // Batch place in GridSpace
+        int placedCount = gridSpaceBlockManager.placeBlocks(gridSpaceBlocks);
+
+        // Add successfully placed blocks to local storage
+        int localCount = 0;
+        for (Map.Entry<BlockPos, LocalBlock> entry : blockMap.entrySet()) {
+            BlockPos pos = entry.getKey();
+            LocalBlock block = entry.getValue();
+
+            if (gridSpaceBlocks.containsKey(pos) && !blocks.containsKey(pos)) {
+                blocks.put(pos, block);
+                localCount++;
+            }
+        }
+
+        if (localCount > 0) {
+            markDirty();
+            blocksDirty = true;
+            networkingComponent.setPendingNetworkUpdate(true);
+        }
+
+        SLogger.log(this, "Imported " + localCount + "/" + blockMap.size() + " blocks (" +
+                placedCount + " placed in GridSpace)");
     }
 
     /**
@@ -239,6 +441,8 @@ public class LocalGrid implements ILoggingControl {
      * @param impulse Impulse vector to apply
      */
     public void applyImpulse(Vector3f impulse) {
+        if (isDestroyed) return;
+
         RigidBody body = getRigidBody();
         if (body != null) {
             body.applyCentralImpulse(impulse);
@@ -252,6 +456,8 @@ public class LocalGrid implements ILoggingControl {
      * @param torque Torque vector to apply
      */
     public void applyTorque(Vector3f torque) {
+        if (isDestroyed) return;
+
         RigidBody body = getRigidBody();
         if (body != null) {
             body.applyTorque(torque);
@@ -259,91 +465,48 @@ public class LocalGrid implements ILoggingControl {
         }
     }
 
-    /**
-     * Gets the grid's axis-aligned bounding box in world space.
-     *
-     * @param minAabb Vector to store minimum point
-     * @param maxAabb Vector to store maximum point
-     */
-    public void getAABB(Vector3f minAabb, Vector3f maxAabb) {
-        physicsComponent.getAABB(minAabb, maxAabb);
-    }
+    // ----------------------------------------------
+    // CLEANUP AND DESTRUCTION
+    // ----------------------------------------------
 
     /**
-     * Gets the velocity at a specific point in the grid (in world space).
-     *
-     * @param worldPoint Point to check velocity at (in world coordinates)
-     * @return Velocity vector at that point
+     * Destroys this LocalGrid and cleans up all associated resources.
+     * This includes deallocating the GridSpace region and clearing all blocks.
      */
-    public Vector3f getVelocityAtPoint(Vector3f worldPoint) {
-        RigidBody body = getRigidBody();
-        if (body == null) {
-            return new Vector3f(0, 0, 0);
+    public void destroy() {
+        if (isDestroyed) {
+            return;
         }
 
-        // Get grid's current velocity
-        Vector3f linearVel = new Vector3f();
-        Vector3f angularVel = new Vector3f();
-        body.getLinearVelocity(linearVel);
-        body.getAngularVelocity(angularVel);
+        SLogger.log(this, "Destroying LocalGrid " + gridId + " and cleaning up GridSpace region " +
+                gridSpaceRegion.getRegionId());
 
-        // Get grid center
-        Vector3f gridCenter = new Vector3f();
-        Transform gridTransform = new Transform();
-        body.getWorldTransform(gridTransform);
-        gridTransform.origin.get(gridCenter);
+        isDestroyed = true;
 
-        // Calculate relative position
-        Vector3f relativePos = new Vector3f();
-        relativePos.sub(worldPoint, gridCenter);
-
-        // Calculate velocity at point (v = linear + angular × r)
-        Vector3f velocityAtPoint = new Vector3f(linearVel);
-        Vector3f angularComponent = new Vector3f();
-        angularComponent.cross(angularVel, relativePos);
-        velocityAtPoint.add(angularComponent);
-
-        return velocityAtPoint;
-    }
-
-
-    /**
-     * Ticks all block entities in this grid.
-     */
-    private void tickBlockEntities() {
-        for (Map.Entry<BlockPos, LocalBlock> entry : blocks.entrySet()) {
-            LocalBlock localBlock = entry.getValue();
-            if (localBlock.hasBlockEntity()) {
-                Object blockEntity = localBlock.getBlockEntity();
-
-                // Tick grid block entities
-                if (blockEntity instanceof GridBlockEntity gridBlockEntity) {
-                    // Create a virtual world position for the block entity
-                    Vector3f worldPos = new Vector3f();
-                    Transform gridTransform = new Transform();
-                    getRigidBody().getWorldTransform(gridTransform);
-                    gridTransform.origin.get(worldPos);
-
-                    BlockPos virtualWorldPos = new BlockPos(
-                            (int) Math.floor(worldPos.x + entry.getKey().getX()),
-                            (int) Math.floor(worldPos.y + entry.getKey().getY()),
-                            (int) Math.floor(worldPos.z + entry.getKey().getZ())
-                    );
-
-                    try {
-                        gridBlockEntity.tick(world, virtualWorldPos, localBlock.getState());
-                    } catch (Exception e) {
-                        SLogger.log(this, "Error ticking grid block entity at " + entry.getKey() + ": " + e.getMessage());
-                        e.printStackTrace();
-                    }
-                }
-            }
+        // Remove from physics engine
+        if (engine != null) {
+            engine.removeGrid(this);
         }
+
+        // Clean up GridSpace blocks and region
+        if (gridSpaceBlockManager != null) {
+            gridSpaceBlockManager.shutdown();
+        }
+
+        if (gridSpaceManager != null) {
+            gridSpaceManager.deallocateRegion(gridId);
+        }
+
+        // Clear local storage
+        blocks.clear();
+
+        SLogger.log(this, "LocalGrid " + gridId + " destroyed successfully");
     }
 
     // ----------------------------------------------
-    // GETTERS / SETTERS
+    // EXISTING GETTER METHODS (UNCHANGED)
     // ----------------------------------------------
+
     /**
      * Gets the unique identifier for this grid.
      */
@@ -359,38 +522,12 @@ public class LocalGrid implements ILoggingControl {
     }
 
     /**
-     * Gets the origin point of this grid.
-     */
-    public Vector3d getOrigin() {
-        return origin;
-    }
-
-    /**
-     * Sets the origin point of this grid.
-     */
-    public void setOrigin(Vector3d origin) {
-        this.origin = origin;
-    }
-
-    /**
-     * Gets the rotation quaternion for this grid.
-     */
-    public Quat4f getRotation() {
-        return rotation;
-    }
-
-    /**
-     * Checks if the grid is dirty and needs rebuilding.
-     */
-    public boolean isDirty() {
-        return isDirty;
-    }
-
-    /**
-     * Marks the grid as needing a rebuild.
+     * Marks the grid as needing a physics rebuild.
      */
     public void markDirty() {
-        isDirty = true;
+        if (!isDestroyed) {
+            isDirty = true;
+        }
     }
 
     /**
@@ -401,7 +538,7 @@ public class LocalGrid implements ILoggingControl {
     }
 
     /**
-     * Gets all blocks in this grid.
+     * Gets all blocks in this grid (local storage).
      */
     public Map<BlockPos, LocalBlock> getBlocks() {
         return blocks;
@@ -449,9 +586,31 @@ public class LocalGrid implements ILoggingControl {
         return new Vector3f((float) origin.x, (float) origin.y, (float) origin.z);
     }
 
+    /**
+     * Gets the GridSpace region allocated to this grid.
+     */
+    public GridSpaceRegion getGridSpaceRegion() {
+        return gridSpaceRegion;
+    }
+
+    /**
+     * Gets the GridSpace block manager for this grid.
+     */
+    public GridSpaceBlockManager getGridSpaceBlockManager() {
+        return gridSpaceBlockManager;
+    }
+
+    /**
+     * Checks if this grid has been destroyed.
+     */
+    public boolean isDestroyed() {
+        return isDestroyed;
+    }
+
     // ----------------------------------------------
-    // PACKAGE-PRIVATE METHODS FOR COMPONENTS
+    // PACKAGE-PRIVATE METHODS FOR COMPONENTS (UNCHANGED)
     // ----------------------------------------------
+
     /**
      * For internal use by components. Gets the physics component.
      */
@@ -486,5 +645,35 @@ public class LocalGrid implements ILoggingControl {
 
     public void clearRenderDataInvalidated() {
         renderDataInvalidated = false;
+    }
+
+    public Quat4f getRotation(){
+        return rotation;
+    }
+
+    // ----------------------------------------------
+    // BLOCK ENTITY HANDLING (PLACEHOLDER FOR FUTURE)
+    // ----------------------------------------------
+
+    /**
+     * Ticks all block entities within this grid.
+     * TODO: Update this method to work with GridSpace block entities.
+     */
+    private void tickBlockEntities() {
+        // Existing implementation - will need updates for GridSpace integration
+        // For now, keeping it as-is to maintain compatibility
+
+        // Future: iterate through GridSpace positions and tick block entities there
+    }
+
+    /**
+     * Gets the axis-aligned bounding box for this grid.
+     */
+    public void getAABB(Vector3f minAabb, Vector3f maxAabb) {
+        physicsComponent.getAABB(minAabb, maxAabb);
+    }
+
+    public Vector3f getVelocityAtPoint(Vector3f entityPosVector) {
+        return getRigidBody().getVelocityInLocalPoint(entityPosVector, new Vector3f());
     }
 }

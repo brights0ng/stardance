@@ -337,4 +337,8 @@ public class PhysicsEngine implements ILoggingControl {
     public boolean stardance$isConsoleLoggingEnabled() {
         return true;
     }
+
+    public void removeGrid(LocalGrid localGrid) {
+        dynamicsWorld.removeRigidBody(localGrid.getRigidBody());
+    }
 }

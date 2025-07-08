@@ -94,6 +94,10 @@ public class Stardance implements ModInitializer {
 		// Hook into block breaking events
 		AttackBlockCallback.EVENT.register(this::handleAttackBlock);
 		PlayerBlockBreakEvents.BEFORE.register(this::handleBlockBreakBefore);
+
+		// Register world unload/stopping event for proper GridSpace cleanup
+		ServerWorldEvents.UNLOAD.register((server, world) -> {engineManager.unload(world);});
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {engineManager.shutdown();});
 	}
 
 	// --------------------------------------------------
