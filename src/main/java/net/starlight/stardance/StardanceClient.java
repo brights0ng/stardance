@@ -25,10 +25,15 @@ import net.starlight.stardance.utils.SLogger;
 import static net.starlight.stardance.Stardance.engineManager;
 
 /**
- * Client entry point for the Stardance mod, handling client-side
- * initialization, rendering hooks, and debug overlays.
+ * FIXED: Client entry point with enhanced debug logging and proper grid rendering.
  */
 public class StardanceClient implements ClientModInitializer, ILoggingControl {
+
+    // Debug counters
+    private static int renderCallCount = 0;
+    private static long lastRenderLogTime = 0;
+    private static final long RENDER_LOG_INTERVAL = 3000; // Log every 3 seconds
+
     @Override
     public boolean stardance$isChatLoggingEnabled() {
         return false;
@@ -38,7 +43,7 @@ public class StardanceClient implements ClientModInitializer, ILoggingControl {
     public boolean stardance$isConsoleLoggingEnabled() {
         return true;
     }
-    
+
     // --------------------------------------------------
     // CLIENT MOD INITIALIZATION
     // --------------------------------------------------
@@ -71,7 +76,7 @@ public class StardanceClient implements ClientModInitializer, ILoggingControl {
         // Register client tick event
         ClientTickEvents.END_CLIENT_TICK.register(this::endClientTick);
 
-        SLogger.log(this, "StardanceClient initialized");
+        SLogger.log(this, "StardanceClient initialized successfully");
     }
 
     // --------------------------------------------------
@@ -92,43 +97,99 @@ public class StardanceClient implements ClientModInitializer, ILoggingControl {
     }
 
     private void endClientTick(MinecraftClient client) {
-        // Periodic cleanup
+        // Periodic cleanup and debug info
         if (client.world != null) {
             ClientGridManager registry = ClientGridManager.getInstance();
+
+            // Periodic debug logging
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - lastRenderLogTime > RENDER_LOG_INTERVAL) {
+                int gridCount = registry.getAllGrids().size();
+                if (gridCount > 0) {
+                    SLogger.log(this, "Client tick - managing " + gridCount + " grids, " +
+                            renderCallCount + " render calls in last " +
+                            (RENDER_LOG_INTERVAL / 1000) + " seconds");
+                }
+                renderCallCount = 0;
+                lastRenderLogTime = currentTime;
+            }
         }
     }
 
     private void onRenderStart(WorldRenderContext context) {
         // This is called at the start of each frame
+        renderCallCount++;
     }
 
     // --------------------------------------------------
-    // PRIVATE RENDERING HELPERS
+    // GRID RENDERING (ENHANCED)
     // --------------------------------------------------
 
+    /**
+     * FIXED: Enhanced grid rendering with interpolation support and debug logging.
+     */
     private void renderGrids(WorldRenderContext context) {
         // Get the client world
         ClientWorld clientWorld = MinecraftClient.getInstance().world;
-        if (clientWorld == null) return;
+        if (clientWorld == null) {
+            return;
+        }
 
         // Get camera position
         Vec3d cameraPos = MinecraftClient.getInstance().gameRenderer.getCamera().getPos();
 
-        // Calculate server partial tick
+        // IMPORTANT: Get partial tick for smooth interpolation
         float partialTick = context.tickDelta();
         long currentWorldTick = clientWorld.getTime();
+
+        // Get the grid manager
+        ClientGridManager registry = ClientGridManager.getInstance();
+
+        // Debug logging (periodic)
+        if (renderCallCount % 60 == 0) { // Every 3 seconds at 20 FPS
+            int gridCount = registry.getAllGrids().size();
+            if (gridCount > 0) {
+                SLogger.log(this, "RENDER: Attempting to render " + gridCount + " grids at tick " +
+                        currentWorldTick + ", partialTick=" + String.format("%.3f", partialTick) +
+                        ", camera at " + cameraPos);
+
+                // Log details about each grid
+                registry.getAllGrids().forEach((uuid, grid) -> {
+                    if (grid != null) {
+                        SLogger.log(this, "  Grid " + uuid + ": hasValidState=" + grid.hasValidState() +
+                                ", GridSpace blocks=" + grid.getGridSpaceBlocks().size() +
+                                ", Grid-local blocks=" + grid.getGridLocalBlocks().size() +
+                                ", hasGridSpaceInfo=" + grid.hasGridSpaceInfo() +
+                                ", position=" + grid.getPosition());
+                    }
+                });
+            } else {
+                SLogger.log(this, "RENDER: No grids to render (partialTick=" + String.format("%.3f", partialTick) + ")");
+            }
+        }
 
         // Position the rendering relative to camera
         MatrixStack matrices = context.matrixStack();
         matrices.push();
-        matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
 
-        // Render all client grids
-        ClientGridManager registry = ClientGridManager.getInstance();
-        registry.renderGrids(matrices, context.consumers(), partialTick, currentWorldTick);
+        try {
+            // Translate to camera-relative coordinates
+            matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
 
-        matrices.pop();
+            // IMPORTANT: Pass partialTick to grid manager for smooth interpolation
+            registry.renderGrids(matrices, context.consumers(), partialTick, currentWorldTick);
+
+        } catch (Exception e) {
+            SLogger.log(this, "ERROR in grid rendering: " + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            matrices.pop();
+        }
     }
+
+    // --------------------------------------------------
+    // COLLISION SHAPE RENDERING (UNCHANGED)
+    // --------------------------------------------------
 
     /**
      * Renders collision shape wireframes if enabled, using the
@@ -155,8 +216,16 @@ public class StardanceClient implements ClientModInitializer, ILoggingControl {
             return;
         }
 
+        // Check if we're in singleplayer (integrated server)
+        MinecraftServer server = MinecraftClient.getInstance().getServer();
+        if (server == null) {
+            // We're on a dedicated server - collision shape rendering not available
+            matrices.pop();
+            return;
+        }
+
         // Convert client world to server world
-        ServerWorld serverWorld = MinecraftClient.getInstance().getServer().getWorld(clientWorld.getRegistryKey());
+        ServerWorld serverWorld = server.getWorld(clientWorld.getRegistryKey());
         if (serverWorld == null) {
             matrices.pop();
             return;

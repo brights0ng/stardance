@@ -72,7 +72,7 @@ public abstract class MixinEntity implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true; // Enabling console logging for debugging
+        return false; // Enabling console logging for debugging
     }
 
     /**

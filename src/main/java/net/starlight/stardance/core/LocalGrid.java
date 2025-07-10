@@ -36,6 +36,8 @@ public class LocalGrid implements ILoggingControl {
     // GRIDSPACE CONSTANTS
     // ----------------------------------------------
 
+    private long lastProcessedTick;
+
     /** Offset to center grid-local coordinates within the GridSpace region */
     private static final int GRIDSPACE_CENTER_OFFSET = 512; // Half of 1024x1024x1024 region size
 
@@ -210,12 +212,53 @@ public class LocalGrid implements ILoggingControl {
     // CORE API METHODS (UPDATED FOR GRIDSPACE)
     // ----------------------------------------------
 
+    // Add this debugging code to your LocalGrid.java class
+
+    // Add these debug fields to LocalGrid
+    private static final Map<UUID, TickDebugInfo> debugTracker = new ConcurrentHashMap<>();
+
+    private static class TickDebugInfo {
+        long lastTickUpdateCall = -1;
+        long lastNetworkUpdateCall = -1;
+        int tickUpdateCallsThisTick = 0;
+        int networkUpdateCallsThisTick = 0;
+        long currentTick = -1;
+    }
+
     /**
-     * Updates the grid's physics and network state.
-     * Called each tick to sync transforms or rebuild if dirty.
+     * DEBUGGING VERSION: Enhanced tickUpdate with comprehensive call tracking.
      */
     public void tickUpdate() {
         if (isDestroyed || physicsComponent.getRigidBody() == null) return;
+
+        long currentServerTick = world.getTime();
+
+        // DEBUG: Track tickUpdate calls
+        TickDebugInfo debug = debugTracker.computeIfAbsent(gridId, k -> new TickDebugInfo());
+
+        if (debug.currentTick != currentServerTick) {
+            // New tick started
+            if (debug.tickUpdateCallsThisTick > 1 || debug.networkUpdateCallsThisTick > 1) {
+                SLogger.log(this, "PREV TICK SUMMARY: Grid " + gridId + " tick " + debug.currentTick +
+                        " - tickUpdate calls: " + debug.tickUpdateCallsThisTick +
+                        ", network calls: " + debug.networkUpdateCallsThisTick);
+            }
+            debug.currentTick = currentServerTick;
+            debug.tickUpdateCallsThisTick = 0;
+            debug.networkUpdateCallsThisTick = 0;
+        }
+
+        debug.tickUpdateCallsThisTick++;
+        debug.lastTickUpdateCall = currentServerTick;
+
+        // Log excessive calls
+        if (debug.tickUpdateCallsThisTick > 1) {
+            SLogger.log(this, "WARNING: Multiple tickUpdate calls for grid " + gridId +
+                    " on tick " + currentServerTick + " (call #" + debug.tickUpdateCallsThisTick + ")");
+        }
+
+        // CRITICAL FIX: Only process full updates once per server tick
+        boolean isNewTick = (currentServerTick != lastProcessedTick);
 
         // CRITICAL FIX: Lock the physics operations to prevent concurrent updates
         synchronized(engine.getPhysicsLock()) {
@@ -225,29 +268,50 @@ public class LocalGrid implements ILoggingControl {
             // Apply physics effects
             physicsComponent.applyVelocityDamping();
 
-            // Tick block entities
-            tickBlockEntities();
+            // Only do expensive operations once per server tick
+            if (isNewTick) {
+                // Tick block entities
+                tickBlockEntities();
 
-            // Rebuild if necessary
-            if (isDirty) {
-                rebuildPhysics();
+                // Rebuild if necessary
+                if (isDirty) {
+                    rebuildPhysics();
 
-                // After rebuilding, send full block data to clients
-                GridNetwork.sendGridBlocks(this);
-            }
+                    // FIXED: Use networking component instead of direct calls
+                    networkingComponent.setPendingNetworkUpdate(true);
+                    networkingComponent.setRebuildInProgress(false); // Rebuild is complete
 
-            // Always send physics state update (position/rotation) every tick
-            // This ensures smooth client-side interpolation
-            GridNetwork.sendGridState(this);
+                    SLogger.log(this, "Physics rebuilt for grid " + gridId + ", marked for network update");
+                }
 
-            // Update which subchunks this grid overlaps
-            physicsComponent.updateActiveSubchunks();
+                // DEBUG: Track network update calls
+                debug.networkUpdateCallsThisTick++;
 
-            // Handle block updates
-            if (blocksDirty) {
-                // If blocks have changed, send a full block update
-                GridNetwork.sendGridBlocks(this);
-                blocksDirty = false;
+                // FIXED: Handle network updates only once per server tick
+                networkingComponent.handleNetworkUpdates();
+
+                // Update which subchunks this grid overlaps
+                physicsComponent.updateActiveSubchunks();
+
+                // Handle block updates
+                if (blocksDirty) {
+                    // FIXED: Use networking component instead of direct call
+                    networkingComponent.setPendingNetworkUpdate(true);
+                    blocksDirty = false;
+
+                    SLogger.log(this, "Blocks dirty for grid " + gridId + ", marked for network update");
+                }
+
+                // Update the last processed tick
+                lastProcessedTick = currentServerTick;
+
+                // Debug: Log tick processing occasionally
+                if (currentServerTick % 60 == 0) { // Every 3 seconds
+                    SLogger.log(this, "Processed tick " + currentServerTick + " for grid " + gridId);
+                }
+            } else {
+                SLogger.log(this, "SKIPPED expensive operations for grid " + gridId +
+                        " - tick " + currentServerTick + " already processed");
             }
         }
 

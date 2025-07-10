@@ -21,8 +21,7 @@ import static net.starlight.stardance.Stardance.PHYSICS_STATE_UPDATE_PACKET_ID;
 import static net.starlight.stardance.Stardance.serverInstance;
 
 /**
- * UPDATED: GridSpace-aware networking component for LocalGrid.
- * Now sends GridSpace block data and region information to clients.
+ * DEBUG: GridSpace-aware networking component with comprehensive debug logging.
  */
 class GridNetworkingComponent {
     // ----------------------------------------------
@@ -50,12 +49,15 @@ class GridNetworkingComponent {
     private Vector3f lastSentPhysicsPosition = new Vector3f();
     private Vector3f lastSentPhysicsCentroid = new Vector3f();
     private Quat4f lastSentPhysicsRotation = new Quat4f(0, 0, 0, 1);
-    private long lastPhysicsUpdateTime = 0;
+    private long lastPhysicsUpdateTime = 0; // Now stores server tick instead of milliseconds
     private int physicsUpdatesCount = 0;
 
     // NEW: GridSpace network state
     private boolean gridSpaceInfoSent = false;
     private boolean initialBlockDataSent = false;
+
+    // DEBUG: Call tracking
+    private int handleNetworkUpdatesCallCount = 0;
 
     // ----------------------------------------------
     // CONSTRUCTOR
@@ -67,24 +69,42 @@ class GridNetworkingComponent {
      */
     GridNetworkingComponent(LocalGrid grid) {
         this.grid = grid;
+        SLogger.log("GridNetworkingComponent", "Created networking component for grid " + grid.getGridId());
     }
 
     // ----------------------------------------------
-    // PUBLIC METHODS (UPDATED FOR GRIDSPACE)
+    // PUBLIC METHODS (DEBUG ENHANCED)
     // ----------------------------------------------
 
     /**
-     * UPDATED: Handles network updates with GridSpace support.
-     * Now sends GridSpace info and blocks instead of local grid data.
+     * DEBUG: Enhanced network update handling with comprehensive logging.
      */
     public void handleNetworkUpdates() {
+        handleNetworkUpdatesCallCount++;
+
         if (grid.isDestroyed()) {
+            if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
+                SLogger.log("GridNetworkingComponent", "Grid " + grid.getGridId() + " is destroyed, skipping network updates");
+            }
             return;
+        }
+
+        // DEBUG: Log call frequency
+        if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
+            SLogger.log("GridNetworkingComponent", "handleNetworkUpdates() call #" + handleNetworkUpdatesCallCount +
+                    " for grid " + grid.getGridId());
+            SLogger.log("GridNetworkingComponent", "  State: gridSpaceInfoSent=" + gridSpaceInfoSent +
+                    ", initialBlockDataSent=" + initialBlockDataSent +
+                    ", pendingNetworkUpdate=" + pendingNetworkUpdate +
+                    ", rebuildComplete=" + rebuildComplete);
         }
 
         // NEW: Send GridSpace info on first update
         if (!gridSpaceInfoSent) {
+            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send GridSpace info for grid " + grid.getGridId());
             sendGridSpaceInfo();
+        } else if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
+            SLogger.log("GridNetworkingComponent", "GridSpace info already sent for grid " + grid.getGridId());
         }
 
         // Send physics state updates
@@ -92,72 +112,104 @@ class GridNetworkingComponent {
 
         // NEW: Send initial block data
         if (!initialBlockDataSent && gridSpaceInfoSent) {
+            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send initial block data for grid " + grid.getGridId());
             sendInitialBlockData();
+        } else if (!initialBlockDataSent) {
+            if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
+                SLogger.log("GridNetworkingComponent", "Waiting for GridSpace info before sending block data for grid " + grid.getGridId());
+            }
         }
 
         // Handle block updates if dirty
         if (pendingNetworkUpdate && rebuildComplete) {
+            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send block updates for grid " + grid.getGridId());
             sendBlockUpdates();
         }
     }
 
     /**
-     * NEW: Sends GridSpace region information to clients.
-     * This tells clients about the GridSpace region allocated to this grid.
+     * DEBUG: Enhanced GridSpace info sending with detailed logging.
      */
     private void sendGridSpaceInfo() {
         try {
+            SLogger.log("GridNetworkingComponent", "sendGridSpaceInfo() called for grid " + grid.getGridId());
+
+            // Check if we have a valid GridSpace region
+            if (grid.getGridSpaceRegion() == null) {
+                SLogger.log("GridNetworkingComponent", "ERROR: No GridSpace region for grid " + grid.getGridId());
+                return;
+            }
+
+            if (grid.getGridSpaceRegion().isCleanedUp()) {
+                SLogger.log("GridNetworkingComponent", "ERROR: GridSpace region is cleaned up for grid " + grid.getGridId());
+                return;
+            }
+
+            SLogger.log("GridNetworkingComponent", "GridSpace region is valid, calling GridNetwork.sendGridSpaceInfo()");
             GridNetwork.sendGridSpaceInfo(grid);
             gridSpaceInfoSent = true;
 
-            if (verbose) {
-                SLogger.log("GridNetworkingComponent", "Sent GridSpace info for grid " + grid.getGridId());
-            }
+            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent GridSpace info for grid " + grid.getGridId());
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "Error sending GridSpace info: " + e.getMessage());
+            SLogger.log("GridNetworkingComponent", "ERROR sending GridSpace info for grid " + grid.getGridId() + ": " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     /**
-     * NEW: Sends initial block data using GridSpace coordinates.
+     * DEBUG: Enhanced initial block data sending.
      */
     private void sendInitialBlockData() {
         try {
+            SLogger.log("GridNetworkingComponent", "sendInitialBlockData() called for grid " + grid.getGridId());
+
             GridNetwork.sendGridBlocks(grid);
             initialBlockDataSent = true;
 
-            if (verbose) {
-                SLogger.log("GridNetworkingComponent", "Sent initial GridSpace block data for grid " + grid.getGridId());
-            }
+            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent initial GridSpace block data for grid " + grid.getGridId());
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "Error sending initial block data: " + e.getMessage());
+            SLogger.log("GridNetworkingComponent", "ERROR sending initial block data for grid " + grid.getGridId() + ": " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     /**
-     * UPDATED: Sends block updates using GridSpace coordinates.
+     * DEBUG: Enhanced block updates sending.
      */
     private void sendBlockUpdates() {
         try {
+            SLogger.log("GridNetworkingComponent", "sendBlockUpdates() called for grid " + grid.getGridId());
+
             // Send GridSpace block data instead of local grid blocks
             GridNetwork.sendGridBlocks(grid);
 
             // Clear pending update flag
             pendingNetworkUpdate = false;
 
-            if (verbose) {
-                SLogger.log("GridNetworkingComponent", "Sent GridSpace block updates for grid " + grid.getGridId());
-            }
+            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent GridSpace block updates for grid " + grid.getGridId());
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "Error sending block updates: " + e.getMessage());
+            SLogger.log("GridNetworkingComponent", "ERROR sending block updates for grid " + grid.getGridId() + ": " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     /**
-     * Sends physics state updates (unchanged).
+     * ULTRA-AGGRESSIVE FIX: Strictly one physics update per server tick, no exceptions.
      */
     private void sendPhysicsStateUpdate() {
         try {
+            // ULTRA-AGGRESSIVE FIX: Strictly one update per server tick
+            long currentServerTick = grid.getWorld().getTime();
+
+            // If we've already sent an update this tick, absolutely refuse to send another
+            if (lastPhysicsUpdateTime == currentServerTick) {
+                if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
+                    SLogger.log("GridNetworkingComponent", "BLOCKED duplicate physics update for grid " + grid.getGridId() +
+                            " - already sent this tick (" + currentServerTick + ")");
+                }
+                return;
+            }
+
             // Get current physics state
             Vector3f currentPosition = new Vector3f();
             Vector3f currentCentroid = grid.getCentroid();
@@ -171,12 +223,8 @@ class GridNetworkingComponent {
             transform.origin.get(currentPosition);
             transform.getRotation(currentRotation);
 
-            // Check if we need to send an update
-            boolean shouldSendUpdate = !hasLastSentTransform ||
-                    hasSignificantPositionChange(currentPosition) ||
-                    hasSignificantRotationChange(currentRotation) ||
-                    hasSignificantCentroidChange(currentCentroid) ||
-                    (System.currentTimeMillis() - lastPhysicsUpdateTime > 100); // Force update every 100ms
+            // SIMPLIFIED: Send update if it's a new tick OR we haven't sent anything yet
+            boolean shouldSendUpdate = !hasLastSentTransform || (currentServerTick > lastPhysicsUpdateTime);
 
             if (shouldSendUpdate) {
                 GridNetwork.sendGridState(grid);
@@ -185,17 +233,24 @@ class GridNetworkingComponent {
                 lastSentPhysicsPosition.set(currentPosition);
                 lastSentPhysicsRotation.set(currentRotation);
                 lastSentPhysicsCentroid.set(currentCentroid);
-                lastPhysicsUpdateTime = System.currentTimeMillis();
+                lastPhysicsUpdateTime = currentServerTick; // Mark this tick as sent
                 hasLastSentTransform = true;
                 physicsUpdatesCount++;
 
-                if (verbose && physicsUpdatesCount % 60 == 0) { // Log every 60 updates (3 seconds at 20 TPS)
-                    SLogger.log("GridNetworkingComponent", "Sent physics update #" + physicsUpdatesCount +
-                            " for grid " + grid.getGridId() + " at " + currentPosition);
+                if (verbose) {
+                    SLogger.log("GridNetworkingComponent", "SENT physics update #" + physicsUpdatesCount +
+                            " for grid " + grid.getGridId() + " at tick " + currentServerTick +
+                            ", pos=" + currentPosition);
+                }
+            } else {
+                if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
+                    SLogger.log("GridNetworkingComponent", "SKIPPED physics update for grid " + grid.getGridId() +
+                            " - no significant change or same tick");
                 }
             }
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "Error sending physics state: " + e.getMessage());
+            SLogger.log("GridNetworkingComponent", "Error sending physics state for grid " + grid.getGridId() + ": " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -238,7 +293,7 @@ class GridNetworkingComponent {
     }
 
     // ----------------------------------------------
-    // STATE MANAGEMENT (UPDATED)
+    // STATE MANAGEMENT (DEBUG ENHANCED)
     // ----------------------------------------------
 
     /**
@@ -246,6 +301,9 @@ class GridNetworkingComponent {
      */
     public void setPendingNetworkUpdate(boolean pending) {
         this.pendingNetworkUpdate = pending;
+        if (verbose) {
+            SLogger.log("GridNetworkingComponent", "Set pending network update to " + pending + " for grid " + grid.getGridId());
+        }
     }
 
     /**
@@ -254,8 +312,13 @@ class GridNetworkingComponent {
     public void setRebuildInProgress(boolean inProgress) {
         this.rebuildComplete = !inProgress;
 
+        if (verbose) {
+            SLogger.log("GridNetworkingComponent", "Set rebuild in progress to " + inProgress + " for grid " + grid.getGridId());
+        }
+
         // If rebuild is complete and we have pending updates, trigger immediate update
         if (rebuildComplete && pendingNetworkUpdate) {
+            SLogger.log("GridNetworkingComponent", "Rebuild complete with pending updates, triggering block updates for grid " + grid.getGridId());
             sendBlockUpdates();
         }
     }
@@ -267,6 +330,8 @@ class GridNetworkingComponent {
         gridSpaceInfoSent = false;
         initialBlockDataSent = false;
         pendingNetworkUpdate = true;
+
+        SLogger.log("GridNetworkingComponent", "Reset GridSpace state for grid " + grid.getGridId());
     }
 
     /**
@@ -288,5 +353,12 @@ class GridNetworkingComponent {
      */
     public boolean isInitialBlockDataSent() {
         return initialBlockDataSent;
+    }
+
+    /**
+     * DEBUG: Gets call count for handleNetworkUpdates.
+     */
+    public int getHandleNetworkUpdatesCallCount() {
+        return handleNetworkUpdatesCallCount;
     }
 }

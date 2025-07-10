@@ -335,7 +335,7 @@ public class PhysicsEngine implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true;
+        return false;
     }
 
     public void removeGrid(LocalGrid localGrid) {

@@ -1,11 +1,16 @@
 package net.starlight.stardance.network;
 
+import net.minecraft.block.BlockRenderType;
 import net.minecraft.block.BlockState;
-import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.*;
+import net.minecraft.client.render.block.BlockRenderManager;
+import net.minecraft.client.render.model.BakedModel;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.BlockPos;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
+import org.joml.Quaternionf;
 
 import javax.vecmath.Quat4f;
 import javax.vecmath.Vector3f;
@@ -14,36 +19,38 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * UPDATED: Client-side grid representation with GridSpace support.
- * Now stores both grid-local blocks (legacy) and GridSpace blocks + region info.
+ * CLEAN: Client-side grid with simple, reliable interpolation between known server states.
+ * No extrapolation - just smooth movement between last and current positions.
  */
 public class ClientLocalGrid implements ILoggingControl {
 
     // Grid identification
     private final UUID gridId;
 
-    // Physics state
-    private Vector3f position = new Vector3f();
-    private Vector3f centroid = new Vector3f();
-    private Quat4f rotation = new Quat4f(0, 0, 0, 1);
+    // Simple two-state interpolation
+    private Vector3f lastPosition = new Vector3f();
+    private Vector3f currentPosition = new Vector3f();
+    private Quat4f lastRotation = new Quat4f(0, 0, 0, 1);
+    private Quat4f currentRotation = new Quat4f(0, 0, 0, 1);
+    private Vector3f currentCentroid = new Vector3f();
+
+    // Timing for interpolation
+    private long lastUpdateTime = 0;
+    private long updateInterval = 50; // Expected time between updates (50ms = 20 TPS)
+    private boolean hasValidState = false;
     private long lastServerTick = 0;
 
     // Block storage
-    private final Map<BlockPos, BlockState> gridLocalBlocks = new ConcurrentHashMap<>(); // Legacy
-    private final Map<BlockPos, BlockState> gridSpaceBlocks = new ConcurrentHashMap<>(); // NEW
+    private final Map<BlockPos, BlockState> gridLocalBlocks = new ConcurrentHashMap<>();
+    private final Map<BlockPos, BlockState> gridSpaceBlocks = new ConcurrentHashMap<>();
 
-    // NEW: GridSpace region information
+    // GridSpace region information
     private int regionId = -1;
     private BlockPos regionOrigin = null;
     private boolean hasGridSpaceInfo = false;
 
-    // Interpolation and rendering state
-    private boolean hasValidState = false;
-    private Vector3f lastPosition = new Vector3f();
-    private Quat4f lastRotation = new Quat4f(0, 0, 0, 1);
-
     // Debug
-    private boolean verbose = true;
+    private int renderCallCount = 0;
 
     // ----------------------------------------------
     // CONSTRUCTOR
@@ -51,7 +58,7 @@ public class ClientLocalGrid implements ILoggingControl {
 
     public ClientLocalGrid(UUID gridId) {
         this.gridId = gridId;
-        SLogger.log(this, "Created ClientLocalGrid: " + gridId);
+        SLogger.log(this, "Created clean interpolation ClientLocalGrid: " + gridId);
     }
 
     // ----------------------------------------------
@@ -59,69 +66,93 @@ public class ClientLocalGrid implements ILoggingControl {
     // ----------------------------------------------
 
     /**
-     * Updates the grid's physics state (unchanged).
+     * CLEAN: Simple state updates with proper interpolation setup.
      */
     public void updateState(Vector3f position, Quat4f rotation, Vector3f centroid, long serverTick) {
-        // Store previous state for interpolation
+        long currentTime = System.currentTimeMillis();
+
+        // Basic rate limiting: max 25 updates per second
+        if (hasValidState && (currentTime - lastUpdateTime) < 40) {
+            return; // Too frequent
+        }
+
+        // Ignore old packets
+        if (hasValidState && serverTick < lastServerTick) {
+            return;
+        }
+
+        // Ignore tiny position changes
         if (hasValidState) {
-            lastPosition.set(this.position);
-            lastRotation.set(this.rotation);
+            float distance = new Vector3f(
+                    position.x - currentPosition.x,
+                    position.y - currentPosition.y,
+                    position.z - currentPosition.z
+            ).length();
+
+            if (distance < 0.005f) { // Less than 5mm
+                return;
+            }
+        }
+
+        // Set up interpolation: current becomes last, new becomes current
+        if (hasValidState) {
+            lastPosition.set(currentPosition);
+            lastRotation.set(currentRotation);
+
+            // Calculate actual interval for better interpolation timing
+            updateInterval = Math.max(40, currentTime - lastUpdateTime);
+        } else {
+            // First update - initialize both to same position (no interpolation)
+            lastPosition.set(position);
+            lastRotation.set(rotation);
         }
 
         // Update current state
-        this.position.set(position);
-        this.rotation.set(rotation);
-        this.centroid.set(centroid);
-        this.lastServerTick = serverTick;
-        this.hasValidState = true;
+        currentPosition.set(position);
+        currentRotation.set(rotation);
+        currentCentroid.set(centroid);
+        lastServerTick = serverTick;
+        lastUpdateTime = currentTime;
+        hasValidState = true;
 
-        if (verbose) {
-            SLogger.log(this, "Updated state for grid " + gridId + ": pos=" + position + ", rot=" + rotation);
+        // Log occasionally
+        if (Math.random() < 0.02) { // 2% chance
+            SLogger.log(this, "Updated state for grid " + gridId + " at tick " + serverTick +
+                    ", interval: " + updateInterval + "ms");
         }
     }
 
     /**
-     * NEW: Updates GridSpace region information.
+     * GridSpace region info update.
      */
     public void updateGridSpaceInfo(int regionId, BlockPos regionOrigin) {
         this.regionId = regionId;
         this.regionOrigin = regionOrigin;
         this.hasGridSpaceInfo = true;
-
-        if (verbose) {
-            SLogger.log(this, "Updated GridSpace info for grid " + gridId +
-                    ": regionId=" + regionId + ", origin=" + regionOrigin);
-        }
     }
 
     /**
-     * NEW: Updates blocks using GridSpace coordinates.
-     * This is the new primary method for block updates.
+     * Updates blocks using GridSpace coordinates.
      */
     public void updateGridSpaceBlocks(Map<BlockPos, BlockState> blocks) {
         gridSpaceBlocks.clear();
         gridSpaceBlocks.putAll(blocks);
 
-        if (verbose) {
+        if (blocks.size() > 0) {
             SLogger.log(this, "Updated GridSpace blocks for grid " + gridId + ": " + blocks.size() + " blocks");
         }
     }
 
     /**
-     * LEGACY: Updates blocks using grid-local coordinates.
-     * Kept for backwards compatibility with old networking.
+     * Updates blocks using grid-local coordinates (legacy).
      */
     public void updateBlocks(Map<BlockPos, BlockState> blocks) {
         gridLocalBlocks.clear();
         gridLocalBlocks.putAll(blocks);
-
-        if (verbose) {
-            SLogger.log(this, "Updated grid-local blocks for grid " + gridId + ": " + blocks.size() + " blocks");
-        }
     }
 
     /**
-     * Updates a single block (assumes grid-local coordinates for compatibility).
+     * Updates a single block.
      */
     public void updateBlock(BlockPos pos, BlockState state) {
         if (state != null) {
@@ -132,15 +163,15 @@ public class ClientLocalGrid implements ILoggingControl {
     }
 
     // ----------------------------------------------
-    // RENDERING (UPDATED)
+    // CLEAN INTERPOLATION RENDERING
     // ----------------------------------------------
 
     /**
-     * UPDATED: Renders this client grid.
-     * Now uses GridSpace blocks if available, falls back to grid-local blocks.
+     * CLEAN: Renders with simple, reliable interpolation between known states.
      */
     public void render(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
                        float partialTick, long currentWorldTick) {
+        renderCallCount++;
 
         if (!hasValidState) {
             return; // No state to render
@@ -151,23 +182,21 @@ public class ClientLocalGrid implements ILoggingControl {
         boolean usingGridSpaceBlocks = false;
 
         if (!gridSpaceBlocks.isEmpty() && hasGridSpaceInfo) {
-            // Use GridSpace blocks (preferred)
             blocksToRender = gridSpaceBlocks;
             usingGridSpaceBlocks = true;
         } else if (!gridLocalBlocks.isEmpty()) {
-            // Fall back to grid-local blocks
             blocksToRender = gridLocalBlocks;
         } else {
-            // No blocks to render
-            return;
+            return; // No blocks to render
         }
 
-        if (verbose && blocksToRender.size() > 0) {
+        // Occasional logging
+        if (renderCallCount % 300 == 0) { // Every 15 seconds at 20 FPS
             SLogger.log(this, "Rendering grid " + gridId + " with " + blocksToRender.size() +
                     " blocks (" + (usingGridSpaceBlocks ? "GridSpace" : "grid-local") + ")");
         }
 
-        // Render blocks with appropriate coordinate transformation
+        // Render blocks
         matrices.push();
         try {
             if (usingGridSpaceBlocks) {
@@ -175,81 +204,139 @@ public class ClientLocalGrid implements ILoggingControl {
             } else {
                 renderGridLocalBlocks(matrices, vertexConsumers, blocksToRender, partialTick);
             }
+        } catch (Exception e) {
+            SLogger.log(this, "Error rendering grid " + gridId + ": " + e.getMessage());
         } finally {
             matrices.pop();
         }
     }
 
     /**
-     * NEW: Renders blocks stored in GridSpace coordinates.
-     * This method should transform GridSpace coordinates to world coordinates for rendering.
+     * CLEAN: Calculates interpolated position between last and current server states.
+     * NO extrapolation - only interpolates between known positions.
      */
+    private Vector3f getInterpolatedPosition() {
+        if (!hasValidState) {
+            return new Vector3f();
+        }
+
+        // Calculate how much time has passed since the last update
+        long currentTime = System.currentTimeMillis();
+        long timeSinceUpdate = currentTime - lastUpdateTime;
+
+        // Calculate interpolation factor (0.0 = use last position, 1.0 = use current position)
+        float interpFactor = Math.min(1.0f, (float) timeSinceUpdate / (float) updateInterval);
+
+        // CRITICAL: Never extrapolate beyond current position (clamp to max 1.0)
+        interpFactor = Math.max(0.0f, Math.min(1.0f, interpFactor));
+
+        // Linear interpolation between last and current
+        Vector3f result = new Vector3f();
+        result.x = lastPosition.x + (currentPosition.x - lastPosition.x) * interpFactor;
+        result.y = lastPosition.y + (currentPosition.y - lastPosition.y) * interpFactor;
+        result.z = lastPosition.z + (currentPosition.z - lastPosition.z) * interpFactor;
+
+        return result;
+    }
+
+    /**
+     * CLEAN: Calculates interpolated rotation between last and current server states.
+     */
+    private Quaternionf getInterpolatedRotation() {
+        if (!hasValidState) {
+            return new Quaternionf(0, 0, 0, 1);
+        }
+
+        // Calculate interpolation factor (same as position)
+        long currentTime = System.currentTimeMillis();
+        long timeSinceUpdate = currentTime - lastUpdateTime;
+        float interpFactor = Math.min(1.0f, (float) timeSinceUpdate / (float) updateInterval);
+        interpFactor = Math.max(0.0f, Math.min(1.0f, interpFactor));
+
+        // Check for valid quaternions
+        if (!isValidQuaternion(lastRotation) || !isValidQuaternion(currentRotation)) {
+            return new Quaternionf(currentRotation.x, currentRotation.y, currentRotation.z, currentRotation.w);
+        }
+
+        // Convert to JOML quaternions
+        Quaternionf lastQuat = new Quaternionf(lastRotation.x, lastRotation.y, lastRotation.z, lastRotation.w);
+        Quaternionf currentQuat = new Quaternionf(currentRotation.x, currentRotation.y, currentRotation.z, currentRotation.w);
+
+        // SLERP interpolation
+        Quaternionf result = new Quaternionf(lastQuat);
+        result.slerp(currentQuat, interpFactor);
+        result.normalize();
+
+        return result;
+    }
+
+    /**
+     * Check if quaternion is valid.
+     */
+    private boolean isValidQuaternion(Quat4f q) {
+        float length = (float) Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+        return Math.abs(length - 1.0f) < 0.1f;
+    }
+
+    /**
+     * Apply interpolated transform to matrix stack.
+     */
+    private void applyGridTransform(MatrixStack matrices, float partialTick) {
+        // Use interpolated position and rotation
+        Vector3f interpPos = getInterpolatedPosition();
+        Quaternionf interpRot = getInterpolatedRotation();
+
+        // Apply position
+        matrices.translate(interpPos.x, interpPos.y, interpPos.z);
+
+        // Apply rotation
+        matrices.multiply(interpRot);
+
+        // Apply centroid offset
+        if (currentCentroid != null) {
+            matrices.translate(-currentCentroid.x, -currentCentroid.y, -currentCentroid.z);
+        }
+    }
+
+    // ----------------------------------------------
+    // RENDERING HELPERS (UNCHANGED)
+    // ----------------------------------------------
+
     private void renderGridSpaceBlocks(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
                                        Map<BlockPos, BlockState> gridSpaceBlocks, float partialTick) {
-
-        // Apply grid transform
         applyGridTransform(matrices, partialTick);
 
-        // TODO: For now, we'll render them as-is
-        // In a complete implementation, you'd want to:
-        // 1. Convert GridSpace coordinates to grid-local coordinates
-        // 2. Apply the grid's transform matrix
-        // 3. Render each block at the transformed position
-
-        // Placeholder rendering - just render a few blocks for testing
-        int rendered = 0;
         for (Map.Entry<BlockPos, BlockState> entry : gridSpaceBlocks.entrySet()) {
-            if (rendered >= 10) break; // Limit for performance during testing
-
             BlockPos gridSpacePos = entry.getKey();
             BlockState state = entry.getValue();
-
-            // Convert GridSpace to grid-local for rendering
             BlockPos gridLocalPos = convertGridSpaceToGridLocal(gridSpacePos);
 
             if (gridLocalPos != null) {
                 renderBlockAt(matrices, vertexConsumers, gridLocalPos, state);
-                rendered++;
             }
-        }
-
-        if (verbose && rendered > 0) {
-            SLogger.log(this, "Rendered " + rendered + " GridSpace blocks for grid " + gridId);
         }
     }
 
-    /**
-     * LEGACY: Renders blocks stored in grid-local coordinates.
-     */
     private void renderGridLocalBlocks(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
                                        Map<BlockPos, BlockState> gridLocalBlocks, float partialTick) {
-
-        // Apply grid transform
         applyGridTransform(matrices, partialTick);
 
-        // Render each block at its grid-local position
         for (Map.Entry<BlockPos, BlockState> entry : gridLocalBlocks.entrySet()) {
             BlockPos gridLocalPos = entry.getKey();
             BlockState state = entry.getValue();
-
             renderBlockAt(matrices, vertexConsumers, gridLocalPos, state);
         }
     }
 
-    /**
-     * NEW: Converts GridSpace coordinates to grid-local coordinates.
-     */
     private BlockPos convertGridSpaceToGridLocal(BlockPos gridSpacePos) {
         if (!hasGridSpaceInfo || regionOrigin == null) {
             return null;
         }
 
-        // GridSpace to region-local
         int regionLocalX = gridSpacePos.getX() - regionOrigin.getX();
         int regionLocalY = gridSpacePos.getY() - regionOrigin.getY();
         int regionLocalZ = gridSpacePos.getZ() - regionOrigin.getZ();
 
-        // Region-local to grid-local (accounting for center offset)
         int gridLocalX = regionLocalX - 512; // GRIDSPACE_CENTER_OFFSET
         int gridLocalY = regionLocalY - 512;
         int gridLocalZ = regionLocalZ - 512;
@@ -258,30 +345,170 @@ public class ClientLocalGrid implements ILoggingControl {
     }
 
     /**
-     * Applies the grid's transform to the matrix stack.
-     */
-    private void applyGridTransform(MatrixStack matrices, float partialTick) {
-        // Apply position
-        matrices.translate(position.x, position.y, position.z);
-
-        // Apply rotation (simplified - you might want more sophisticated interpolation)
-        // TODO: Apply rotation from quaternion
-        // For now, we'll skip rotation to get basic positioning working
-    }
-
-    /**
-     * Renders a single block at the specified grid-local position.
+     * ENHANCED: Renders a single block with proper lighting, tinting, and render layers.
      */
     private void renderBlockAt(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
                                BlockPos gridLocalPos, BlockState state) {
+
+        if (state == null || state.isAir()) {
+            return;
+        }
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        BlockRenderManager blockRenderManager = client.getBlockRenderManager();
+
+        if (blockRenderManager == null) {
+            return;
+        }
+
         matrices.push();
-        matrices.translate(gridLocalPos.getX(), gridLocalPos.getY(), gridLocalPos.getZ());
+        try {
+            matrices.translate(gridLocalPos.getX(), gridLocalPos.getY(), gridLocalPos.getZ());
 
-        // TODO: Actual block rendering
-        // For now, this is a placeholder
-        // You'll need to use Minecraft's BlockRenderManager here
+            BlockRenderType renderType = state.getRenderType();
 
-        matrices.pop();
+            if (renderType == BlockRenderType.MODEL) {
+                BakedModel model = blockRenderManager.getModel(state);
+
+                if (model != null) {
+                    // ENHANCED: Calculate proper lighting based on world position
+                    int lightValue = calculateLightValue(gridLocalPos);
+
+                    // ENHANCED: Get block tinting for grass, leaves, etc.
+                    int blockColor = getBlockColor(state, gridLocalPos);
+                    float red = ((blockColor >> 16) & 0xFF) / 255.0f;
+                    float green = ((blockColor >> 8) & 0xFF) / 255.0f;
+                    float blue = (blockColor & 0xFF) / 255.0f;
+
+                    // ENHANCED: Support multiple render layers
+                    renderBlockInLayers(matrices, vertexConsumers, state, model,
+                            red, green, blue, lightValue);
+                }
+            } else if (renderType == BlockRenderType.ENTITYBLOCK_ANIMATED) {
+                // Handle special block entities (chests, etc.) if needed
+                renderBlockEntity(matrices, vertexConsumers, gridLocalPos, state);
+            }
+
+        } catch (Exception e) {
+            // Silent failure to avoid spam
+        } finally {
+            matrices.pop();
+        }
+    }
+
+    private void renderBlockInLayers(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+                                     BlockState state, BakedModel model,
+                                     float red, float green, float blue, int lightValue) {
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        BlockRenderManager blockRenderManager = client.getBlockRenderManager();
+
+        // Get the correct render layer(s) for this specific block
+        RenderLayer layer = RenderLayers.getBlockLayer(state);
+
+        try {
+            blockRenderManager.getModelRenderer().render(
+                    matrices.peek(),
+                    vertexConsumers.getBuffer(layer),
+                    state,
+                    model,
+                    red, green, blue,
+                    lightValue,
+                    OverlayTexture.DEFAULT_UV
+            );
+        } catch (Exception e) {
+            // Fallback to solid if the correct layer fails
+            blockRenderManager.getModelRenderer().render(
+                    matrices.peek(),
+                    vertexConsumers.getBuffer(RenderLayer.getSolid()),
+                    state,
+                    model,
+                    red, green, blue,
+                    lightValue,
+                    OverlayTexture.DEFAULT_UV
+            );
+        }
+    }
+
+    /**
+     * ENHANCED: Calculates proper lighting value based on world position.
+     */
+    private int calculateLightValue(BlockPos gridLocalPos) {
+        MinecraftClient client = MinecraftClient.getInstance();
+
+        if (client.world == null) {
+            return 0xF000F0; // Fallback to full bright
+        }
+
+        // Get interpolated grid position in world space
+        Vector3f worldPos = getInterpolatedPosition();
+        BlockPos worldBlockPos = new BlockPos(
+                (int) Math.floor(worldPos.x + gridLocalPos.getX()),
+                (int) Math.floor(worldPos.y + gridLocalPos.getY()),
+                (int) Math.floor(worldPos.z + gridLocalPos.getZ())
+        );
+
+        // Get lighting from the world at this position
+        int skyLight = client.world.getLightLevel(net.minecraft.world.LightType.SKY, worldBlockPos);
+        int blockLight = client.world.getLightLevel(net.minecraft.world.LightType.BLOCK, worldBlockPos);
+
+        // Pack lighting values (Minecraft format)
+        return LightmapTextureManager.pack(blockLight, skyLight);    }
+
+    /**
+     * ENHANCED: Gets proper block color including biome tinting.
+     */
+    private int getBlockColor(BlockState state, BlockPos gridLocalPos) {
+        MinecraftClient client = MinecraftClient.getInstance();
+
+        if (client.world == null) {
+            return 0xFFFFFF; // White fallback
+        }
+
+        try {
+            // Get block colors instance
+            net.minecraft.client.color.block.BlockColors blockColors = client.getBlockColors();
+
+            // Calculate world position for biome sampling
+            Vector3f worldPos = getInterpolatedPosition();
+            BlockPos worldBlockPos = new BlockPos(
+                    (int) Math.floor(worldPos.x + gridLocalPos.getX()),
+                    (int) Math.floor(worldPos.y + gridLocalPos.getY()),
+                    (int) Math.floor(worldPos.z + gridLocalPos.getZ())
+            );
+
+            // Get color with biome context
+            return blockColors.getColor(state, client.world, worldBlockPos, 0);
+
+        } catch (Exception e) {
+            return 0xFFFFFF; // White fallback
+        }
+    }
+
+    /**
+     * ENHANCED: Handles special block entities (chests, furnaces, etc.).
+     */
+    private void renderBlockEntity(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+                                   BlockPos gridLocalPos, BlockState state) {
+        // For now, just render as a regular block
+        // TODO: Implement full block entity rendering if needed
+        MinecraftClient client = MinecraftClient.getInstance();
+        BlockRenderManager blockRenderManager = client.getBlockRenderManager();
+        BakedModel model = blockRenderManager.getModel(state);
+
+        if (model != null) {
+            int lightValue = calculateLightValue(gridLocalPos);
+
+            blockRenderManager.getModelRenderer().render(
+                    matrices.peek(),
+                    vertexConsumers.getBuffer(RenderLayer.getSolid()),
+                    state,
+                    model,
+                    1.0f, 1.0f, 1.0f,
+                    lightValue,
+                    OverlayTexture.DEFAULT_UV
+            );
+        }
     }
 
     // ----------------------------------------------
@@ -289,13 +516,12 @@ public class ClientLocalGrid implements ILoggingControl {
     // ----------------------------------------------
 
     public UUID getGridId() { return gridId; }
-    public Vector3f getPosition() { return position; }
-    public Vector3f getCentroid() { return centroid; }
-    public Quat4f getRotation() { return rotation; }
+    public Vector3f getPosition() { return getInterpolatedPosition(); }
+    public Vector3f getCentroid() { return currentCentroid; }
+    public Quat4f getRotation() { return currentRotation; }
     public long getLastServerTick() { return lastServerTick; }
     public boolean hasValidState() { return hasValidState; }
 
-    // NEW getters
     public Map<BlockPos, BlockState> getGridSpaceBlocks() { return gridSpaceBlocks; }
     public Map<BlockPos, BlockState> getGridLocalBlocks() { return gridLocalBlocks; }
     public boolean hasGridSpaceInfo() { return hasGridSpaceInfo; }
