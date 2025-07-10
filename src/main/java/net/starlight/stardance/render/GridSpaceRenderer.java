@@ -15,19 +15,21 @@ import net.starlight.stardance.gridspace.GridSpaceBlockManager;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 import org.joml.Vector3f;
+import org.joml.Quaternionf;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * VS2-style renderer that projects GridSpace blocks into world space using rigid body transforms.
- * This replaces the old approach of rendering from LocalGrid's block map.
+ * Now includes smooth interpolation for 60+ FPS rendering instead of choppy 20 TPS movement.
  *
  * Key principles from VS2:
  * 1. Blocks stay in GridSpace (never moved)
  * 2. Rendering applies real-time coordinate transformation
  * 3. Matrix transformation uses rigid body's current transform
  * 4. Client-side projection for smooth interpolation
+ * 5. Interpolation between physics ticks for smooth movement
  */
 public class GridSpaceRenderer implements ILoggingControl {
 
@@ -38,14 +40,14 @@ public class GridSpaceRenderer implements ILoggingControl {
     /** Maximum render distance for grid blocks */
     private static final double MAX_RENDER_DISTANCE = 256.0;
 
-    /** Cache time for transform matrices (in milliseconds) */
-    private static final long TRANSFORM_CACHE_TIME = 16; // ~60 FPS
+    /** Cache time for transform matrices (in milliseconds) - matches server tick rate */
+    private static final long TRANSFORM_CACHE_TIME = 50; // 20 TPS = 50ms per tick
 
     // ----------------------------------------------
     // CACHE MANAGEMENT
     // ----------------------------------------------
 
-    /** Cached transform matrices per grid */
+    /** Cached transform matrices per grid with interpolation support */
     private final ConcurrentHashMap<LocalGrid, CachedTransform> transformCache = new ConcurrentHashMap<>();
 
     /** Last render frame time for cache invalidation */
@@ -68,67 +70,52 @@ public class GridSpaceRenderer implements ILoggingControl {
     }
 
     // ----------------------------------------------
-    // MAIN RENDERING METHOD
+    // MAIN RENDERING METHODS
     // ----------------------------------------------
 
     /**
      * Renders all active grids by projecting their GridSpace blocks into world space.
      * This is the main entry point called during world rendering.
-     *
-     * @param matrixStack Matrix stack for transformations
-     * @param vertexConsumers Vertex consumers for rendering
-     * @param playerPos Current player position for culling
-     * @param grids Set of active grids to render
      */
-    public void renderGrids(MatrixStack matrixStack, VertexConsumerProvider vertexConsumers,
-                            Vec3d playerPos, Set<LocalGrid> grids) {
-
-        SLogger.log(this, "=== GridSpaceRenderer.renderGrids() called ===");
-        SLogger.log(this, "Player position: " + playerPos);
-        SLogger.log(this, "Number of grids to render: " + (grids != null ? grids.size() : "null"));
+    public void renderGrids(Set<LocalGrid> grids, MatrixStack matrixStack,
+                               VertexConsumerProvider vertexConsumers, Vec3d playerPos, float tickDelta) {
 
         if (grids == null || grids.isEmpty()) {
-            SLogger.log(this, "No grids to render - exiting early");
             return;
         }
 
+        SLogger.log(this, "=== Rendering " + grids.size() + " grids with interpolation (tickDelta: " + tickDelta + ") ===");
+
         long currentTime = System.currentTimeMillis();
 
-        // Update render time for cache invalidation
-        if (currentTime - lastRenderTime > TRANSFORM_CACHE_TIME) {
-            invalidateTransformCache();
-            lastRenderTime = currentTime;
+        // Clean up old cache entries if this is a new frame
+        if (currentTime - lastRenderTime > 100) { // Clean every 100ms
+            cleanupTransformCache(grids);
         }
+        lastRenderTime = currentTime;
 
-        int renderedCount = 0;
-        int skippedCount = 0;
-
+        // Render each grid with interpolation
         for (LocalGrid grid : grids) {
-            SLogger.log(this, "Processing grid: " + grid.getGridId());
-
-            if (shouldRenderGrid(grid, playerPos)) {
-                SLogger.log(this, "Rendering grid: " + grid.getGridId());
-                renderGrid(grid, matrixStack, vertexConsumers, playerPos);
-                renderedCount++;
-            } else {
-                SLogger.log(this, "Skipping grid: " + grid.getGridId() + " (out of range or destroyed)");
-                skippedCount++;
+            if (grid != null && !grid.isDestroyed()) {
+                renderGrid(grid, matrixStack, vertexConsumers, playerPos, tickDelta);
             }
         }
 
-        SLogger.log(this, "Rendering complete - rendered: " + renderedCount + ", skipped: " + skippedCount);
+        SLogger.log(this, "All grids rendered successfully");
     }
 
     /**
-     * Renders a single grid using VS2-style projection.
+     * Renders a single grid with interpolated transforms.
      *
      * @param grid The grid to render
      * @param matrixStack Matrix stack for transformations
      * @param vertexConsumers Vertex consumers for rendering
      * @param playerPos Player position for optimization
+     * @param tickDelta Interpolation factor between physics ticks (0.0-1.0)
      */
-    public void renderGrid(LocalGrid grid, MatrixStack matrixStack, VertexConsumerProvider vertexConsumers, Vec3d playerPos) {
-        SLogger.log(this, "=== Rendering individual grid: " + grid.getGridId() + " ===");
+    public void renderGrid(LocalGrid grid, MatrixStack matrixStack, VertexConsumerProvider vertexConsumers,
+                           Vec3d playerPos, float tickDelta) {
+        SLogger.log(this, "=== Rendering individual grid with interpolation: " + grid.getGridId() + " ===");
 
         if (grid.isDestroyed()) {
             SLogger.log(this, "Grid is destroyed, skipping");
@@ -147,7 +134,7 @@ public class GridSpaceRenderer implements ILoggingControl {
 
             SLogger.log(this, "Transform computed successfully");
 
-            // Get GridSpace blocks to render
+            // Get GridSpace components
             GridSpaceRegion gridSpaceRegion = grid.getGridSpaceRegion();
             GridSpaceBlockManager blockManager = grid.getGridSpaceBlockManager();
 
@@ -163,8 +150,8 @@ public class GridSpaceRenderer implements ILoggingControl {
 
             SLogger.log(this, "GridSpace components are valid, proceeding to render blocks");
 
-            // Render each block in GridSpace with transformation applied
-            renderGridSpaceBlocks(grid, gridSpaceRegion, cachedTransform, matrixStack, vertexConsumers, playerPos);
+            // Render each block in GridSpace with interpolated transformation applied
+            renderGridSpaceBlocks(grid, gridSpaceRegion, cachedTransform, matrixStack, vertexConsumers, playerPos, tickDelta);
 
             SLogger.log(this, "Grid rendering completed successfully");
 
@@ -175,12 +162,12 @@ public class GridSpaceRenderer implements ILoggingControl {
     }
 
     // ----------------------------------------------
-    // TRANSFORM COMPUTATION (VS2-STYLE)
+    // TRANSFORM COMPUTATION WITH INTERPOLATION
     // ----------------------------------------------
 
     /**
-     * Gets or computes the transform for a grid.
-     * Now stores the JBullet Transform directly for proper rotation/translation.
+     * Gets or computes the transform for a grid with interpolation support.
+     * Stores both previous and current transforms for smooth interpolation.
      */
     private CachedTransform getOrComputeTransform(LocalGrid grid) {
         SLogger.log(this, "=== Computing transform for grid: " + grid.getGridId() + " ===");
@@ -189,54 +176,64 @@ public class GridSpaceRenderer implements ILoggingControl {
         CachedTransform cached = transformCache.get(grid);
         long currentTime = System.currentTimeMillis();
 
-        if (cached != null && (currentTime - cached.computeTime) < TRANSFORM_CACHE_TIME) {
-            SLogger.log(this, "Using cached transform");
+        if (cached == null) {
+            // Create new cached transform
+            Transform rigidBodyTransform = new Transform();
+            grid.getCurrentTransform(rigidBodyTransform);
+
+            cached = new CachedTransform(rigidBodyTransform, currentTime);
+            transformCache.put(grid, cached);
+
+            SLogger.log(this, "Created new cached transform");
             return cached;
         }
 
-        SLogger.log(this, "Computing new transform");
+        // Check if we need to update (new physics tick)
+        if ((currentTime - cached.computeTime) >= TRANSFORM_CACHE_TIME) {
+            // Get new transform
+            Transform rigidBodyTransform = new Transform();
+            grid.getCurrentTransform(rigidBodyTransform);
 
-        // Get the rigid body transform
-        Transform rigidBodyTransform = new Transform();
-        grid.getCurrentTransform(rigidBodyTransform);
+            // Update the cached transform (shifts current to previous)
+            cached.updateTransform(rigidBodyTransform, currentTime);
 
-        SLogger.log(this, "Rigid body transform: " + rigidBodyTransform.origin + ", " + rigidBodyTransform.basis);
+            SLogger.log(this, "Updated cached transform with interpolation data");
+        }
 
-        // Store the JBullet transform directly
-        CachedTransform newTransform = new CachedTransform(rigidBodyTransform, currentTime);
-        transformCache.put(grid, newTransform);
-
-        SLogger.log(this, "Transform computed and cached successfully");
-        return newTransform;
+        return cached;
     }
 
     // ----------------------------------------------
-    // BLOCK RENDERING (THE CORE PROJECTION)
+    // BLOCK RENDERING WITH INTERPOLATION
     // ----------------------------------------------
 
     /**
-     * Renders blocks from GridSpace with transformation applied.
+     * Renders blocks from GridSpace with interpolated transformation applied.
      * This is where the "projection" magic happens, just like VS2.
      *
-     * Flow: GridSpace coords → Centered coords (0,0,0) → Rotate → Translate → World coords
+     * FLOW: GridSpace coords → Grid-local coords → Centroid-relative coords → Interpolated transform → World coords
      */
     private void renderGridSpaceBlocks(LocalGrid grid, GridSpaceRegion gridSpaceRegion,
                                        CachedTransform transform, MatrixStack matrixStack,
-                                       VertexConsumerProvider vertexConsumers, Vec3d playerPos) {
+                                       VertexConsumerProvider vertexConsumers, Vec3d playerPos, float tickDelta) {
 
-        SLogger.log(this, "=== Rendering GridSpace blocks ===");
+        SLogger.log(this, "=== Rendering GridSpace blocks with interpolation (tickDelta: " + tickDelta + ") ===");
 
         // Get the GridSpace region origin and calculate center
         BlockPos gridSpaceOrigin = gridSpaceRegion.getRegionOrigin();
         SLogger.log(this, "GridSpace region origin: " + gridSpaceOrigin);
 
-        // FIXED: Calculate the center of the GridSpace region (where grid-local 0,0,0 maps to)
+        // Calculate the center of the GridSpace region (where grid-local 0,0,0 maps to)
         BlockPos gridSpaceCenter = new BlockPos(
                 gridSpaceOrigin.getX() + 512,  // Half of 1024 region size
                 gridSpaceOrigin.getY() + 512,
                 gridSpaceOrigin.getZ() + 512
         );
         SLogger.log(this, "GridSpace region center: " + gridSpaceCenter);
+
+        // Get the centroid from physics (center of mass)
+        javax.vecmath.Vector3f centroid = grid.getCentroid();
+        SLogger.log(this, "Grid centroid: " + centroid.x + ", " + centroid.y + ", " + centroid.z);
 
         // Get all blocks in the grid
         var blocks = grid.getBlocks();
@@ -257,17 +254,34 @@ public class GridSpaceRenderer implements ILoggingControl {
             BlockPos gridSpacePos = grid.gridLocalToGridSpace(gridLocalPos);
             SLogger.log(this, "GridSpace position: " + gridSpacePos);
 
-            // Step 2: FIXED - Convert GridSpace position to centered position (subtract region CENTER)
-            Vector3f centeredPos = new Vector3f(
+            // Step 2: Convert GridSpace position back to grid-local coordinates
+            // This gives us the position relative to grid-local (0,0,0)
+            Vector3f gridLocalPosition = new Vector3f(
                     gridSpacePos.getX() - gridSpaceCenter.getX(),
                     gridSpacePos.getY() - gridSpaceCenter.getY(),
                     gridSpacePos.getZ() - gridSpaceCenter.getZ()
             );
-            SLogger.log(this, "Centered position (GridSpace - center): " + centeredPos.x + ", " + centeredPos.y + ", " + centeredPos.z);
+            SLogger.log(this, "Grid-local position: " + gridLocalPosition.x + ", " + gridLocalPosition.y + ", " + gridLocalPosition.z);
 
-            // Step 3 & 4: Apply rigid body transform (rotation + translation)
-            Vector3f worldPos = applyRigidBodyTransform(centeredPos, transform);
-            SLogger.log(this, "Final world position: " + worldPos.x + ", " + worldPos.y + ", " + worldPos.z);
+            // Step 3: Position relative to centroid (matches the old GridRenderer!)
+            // This matches exactly what the old system did: pos - centroid
+            Vector3f centroidRelativePos = new Vector3f(
+                    gridLocalPosition.x - centroid.x,
+                    gridLocalPosition.y - centroid.y,
+                    gridLocalPosition.z - centroid.z
+            );
+            SLogger.log(this, "Centroid-relative position: " + centroidRelativePos.x + ", " + centroidRelativePos.y + ", " + centroidRelativePos.z);
+
+            // Step 4: Apply interpolated rigid body transform
+            Vector3f worldPos = applyRigidBodyTransformWithInterpolation(centroidRelativePos, transform, tickDelta);
+
+            // Step 5: Center the block properly (Minecraft coordinate system)
+            // Block at (1,1,1) should render at (1.5,1.5,1.5)
+            worldPos.x += 0.5f;
+            worldPos.y += 0.5f;
+            worldPos.z += 0.5f;
+
+            SLogger.log(this, "Final world position (centered): " + worldPos.x + ", " + worldPos.y + ", " + worldPos.z);
 
             // Cull blocks that are too far away
             double distance = playerPos.distanceTo(new Vec3d(worldPos.x, worldPos.y, worldPos.z));
@@ -279,34 +293,74 @@ public class GridSpaceRenderer implements ILoggingControl {
                 continue;
             }
 
-            // Render the block at its transformed world position
+            // Render the block at its interpolated world position
             SLogger.log(this, "Rendering block at world position: " + worldPos.x + ", " + worldPos.y + ", " + worldPos.z);
-            renderBlockAtWorldPosition(blockState, worldPos, transform, matrixStack, vertexConsumers);
+            renderBlockAtWorldPosition(blockState, worldPos, transform, matrixStack, vertexConsumers, tickDelta);
             renderedBlocks++;
         }
 
-        SLogger.log(this, "Block rendering complete - rendered: " + renderedBlocks + ", culled: " + culledBlocks);
+        SLogger.log(this, "Interpolated rendering complete - rendered: " + renderedBlocks + ", culled: " + culledBlocks);
     }
 
     /**
-     * Applies the rigid body transform to a centered position.
-     * This handles both rotation around origin and translation to final position.
+     * Applies the rigid body transform with smooth interpolation between ticks.
+     * This creates smooth movement at high framerates instead of choppy 20 TPS movement.
      */
-    private Vector3f applyRigidBodyTransform(Vector3f centeredPos, CachedTransform transform) {
+    private Vector3f applyRigidBodyTransformWithInterpolation(Vector3f centroidRelativePos, CachedTransform transform, float tickDelta) {
+
+        // If this is the first frame, no interpolation needed
+        if (transform.needsInitialization) {
+            return applyRigidBodyTransformStatic(centroidRelativePos, transform.currentBulletTransform);
+        }
+
+        // Interpolate position
+        javax.vecmath.Vector3f prevPos = new javax.vecmath.Vector3f();
+        javax.vecmath.Vector3f currPos = new javax.vecmath.Vector3f();
+        transform.previousBulletTransform.origin.get(prevPos);
+        transform.currentBulletTransform.origin.get(currPos);
+
+        Vector3f interpolatedPos = new Vector3f(
+                prevPos.x + (currPos.x - prevPos.x) * tickDelta,
+                prevPos.y + (currPos.y - prevPos.y) * tickDelta,
+                prevPos.z + (currPos.z - prevPos.z) * tickDelta
+        );
+
+        // Interpolate rotation
+        javax.vecmath.Quat4f prevRot = new javax.vecmath.Quat4f();
+        javax.vecmath.Quat4f currRot = new javax.vecmath.Quat4f();
+        transform.previousBulletTransform.getRotation(prevRot);
+        transform.currentBulletTransform.getRotation(currRot);
+
+        javax.vecmath.Quat4f interpolatedRot = new javax.vecmath.Quat4f();
+        interpolatedRot.interpolate(prevRot, currRot, tickDelta);
+
+        // Create interpolated transform
+        Transform interpolatedTransform = new Transform();
+        interpolatedTransform.origin.set(interpolatedPos.x, interpolatedPos.y, interpolatedPos.z);
+        interpolatedTransform.setRotation(interpolatedRot);
+
+        // Apply the interpolated transform
+        return applyRigidBodyTransformStatic(centroidRelativePos, interpolatedTransform);
+    }
+
+    /**
+     * Static version of transform application (no interpolation).
+     * Handles both rotation around origin and translation to final position.
+     */
+    private Vector3f applyRigidBodyTransformStatic(Vector3f centroidRelativePos, Transform rigidBodyTransform) {
         // Get the rigid body transform components
         javax.vecmath.Vector3f rigidBodyPos = new javax.vecmath.Vector3f();
-        Transform rigidBodyTransform = transform.bulletTransform;
         rigidBodyTransform.origin.get(rigidBodyPos);
 
-        // Apply rotation to the centered position
-        javax.vecmath.Vector3f rotatedPos = new javax.vecmath.Vector3f(centeredPos.x, centeredPos.y, centeredPos.z);
+        // Apply rotation to the centroid-relative position
+        javax.vecmath.Vector3f rotatedPos = new javax.vecmath.Vector3f(centroidRelativePos.x, centroidRelativePos.y, centroidRelativePos.z);
         rigidBodyTransform.basis.transform(rotatedPos);
 
-        // FIXED: Subtract 0.5 to account for Minecraft block centering
+        // Translate to final world position
         Vector3f finalPos = new Vector3f(
-                rotatedPos.x + rigidBodyPos.x - 0.5f,
-                rotatedPos.y + rigidBodyPos.y - 0.5f,
-                rotatedPos.z + rigidBodyPos.z - 0.5f
+                rotatedPos.x + rigidBodyPos.x,
+                rotatedPos.y + rigidBodyPos.y,
+                rotatedPos.z + rigidBodyPos.z
         );
 
         return finalPos;
@@ -317,28 +371,31 @@ public class GridSpaceRenderer implements ILoggingControl {
      * This is where we actually draw the block to the screen.
      */
     private void renderBlockAtWorldPosition(BlockState blockState, Vector3f worldPos, CachedTransform transform,
-                                            MatrixStack matrixStack, VertexConsumerProvider vertexConsumers) {
+                                            MatrixStack matrixStack, VertexConsumerProvider vertexConsumers, float tickDelta) {
 
         matrixStack.push();
 
         try {
-            // Translate to world position
+            // Translate to world position (now properly centered)
             matrixStack.translate(worldPos.x, worldPos.y, worldPos.z);
 
-            // FIXED: Apply rotation from rigid body transform
-            applyRotationToMatrixStack(matrixStack, transform.bulletTransform);
+            // Apply interpolated rotation from rigid body transform
+            applyInterpolatedRotationToMatrixStack(matrixStack, transform, tickDelta);
 
-            // FIXED: Calculate correct BlockPos for lighting (round to nearest integer)
+            // Calculate correct BlockPos for lighting from block center
+            // Since worldPos is now centered (1.5, 1.5, 1.5), we need to get the block position (1, 1, 1)
             BlockPos lightingPos = new BlockPos(
-                    (int) Math.round(worldPos.x),
-                    (int) Math.round(worldPos.y),
-                    (int) Math.round(worldPos.z)
+                    (int) Math.floor(worldPos.x),
+                    (int) Math.floor(worldPos.y),
+                    (int) Math.floor(worldPos.z)
             );
+
+            SLogger.log(this, "Lighting calculated from block position: " + lightingPos);
 
             // Render the block using Minecraft's block renderer with correct lighting position
             blockRenderer.renderBlock(
                     blockState,
-                    lightingPos, // FIXED: Use actual world position for lighting instead of BlockPos.ORIGIN
+                    lightingPos, // Use the proper block position for lighting
                     client.world,
                     matrixStack,
                     vertexConsumers.getBuffer(net.minecraft.client.render.RenderLayer.getSolid()),
@@ -354,64 +411,60 @@ public class GridSpaceRenderer implements ILoggingControl {
     }
 
     /**
-     * Applies the rotation from a JBullet Transform to a Minecraft MatrixStack.
-     * This makes the block rotate with the rigid body.
+     * Applies interpolated rotation from a JBullet Transform to a Minecraft MatrixStack.
+     * This makes the block rotate smoothly with the rigid body.
      */
-    private void applyRotationToMatrixStack(MatrixStack matrixStack, Transform bulletTransform) {
-        // Extract rotation matrix from JBullet transform
-        javax.vecmath.Matrix3f rotationMatrix = bulletTransform.basis;
-
-        // Convert to Minecraft's matrix format and apply
-        // JBullet uses row-major, Minecraft uses column-major, so we need to transpose
-        org.joml.Matrix4f minecraftMatrix = new org.joml.Matrix4f(
-                rotationMatrix.m00, rotationMatrix.m10, rotationMatrix.m20, 0,
-                rotationMatrix.m01, rotationMatrix.m11, rotationMatrix.m21, 0,
-                rotationMatrix.m02, rotationMatrix.m12, rotationMatrix.m22, 0,
-                0, 0, 0, 1
-        );
-
-        // Apply the rotation to the matrix stack
-        matrixStack.multiplyPositionMatrix(minecraftMatrix);
-    }
-
-    // ----------------------------------------------
-    // OPTIMIZATION AND CULLING
-    // ----------------------------------------------
-
-    /**
-     * Determines if a grid should be rendered based on distance and other factors.
-     */
-    private boolean shouldRenderGrid(LocalGrid grid, Vec3d playerPos) {
-        SLogger.log(this, "=== Checking if grid should render: " + grid.getGridId() + " ===");
-
-        if (grid.isDestroyed()) {
-            SLogger.log(this, "Grid is destroyed, should not render");
-            return false;
+    private void applyInterpolatedRotationToMatrixStack(MatrixStack matrixStack, CachedTransform transform, float tickDelta) {
+        if (transform.needsInitialization) {
+            // No interpolation for first frame
+            applyRotationToMatrixStack(matrixStack, transform.currentBulletTransform);
+            return;
         }
 
-        // Get grid's world position
-        javax.vecmath.Vector3f gridPos = new javax.vecmath.Vector3f();
-        Transform gridTransform = new Transform();
-        grid.getCurrentTransform(gridTransform);
-        gridTransform.origin.get(gridPos);
+        // Get interpolated rotation
+        javax.vecmath.Quat4f prevRot = new javax.vecmath.Quat4f();
+        javax.vecmath.Quat4f currRot = new javax.vecmath.Quat4f();
+        transform.previousBulletTransform.getRotation(prevRot);
+        transform.currentBulletTransform.getRotation(currRot);
 
-        SLogger.log(this, "Grid world position: " + gridPos.x + ", " + gridPos.y + ", " + gridPos.z);
-        SLogger.log(this, "Player position: " + playerPos.x + ", " + playerPos.y + ", " + playerPos.z);
+        javax.vecmath.Quat4f interpolatedRot = new javax.vecmath.Quat4f();
+        interpolatedRot.interpolate(prevRot, currRot, tickDelta);
 
-        // Check distance
-        double distance = playerPos.distanceTo(new Vec3d(gridPos.x, gridPos.y, gridPos.z));
-        SLogger.log(this, "Distance to grid: " + distance + ", max distance: " + MAX_RENDER_DISTANCE);
-
-        boolean shouldRender = distance <= MAX_RENDER_DISTANCE;
-        SLogger.log(this, "Should render: " + shouldRender);
-
-        return shouldRender;
+        // Convert to JOML quaternion for Minecraft
+        Quaternionf mcQuat = new Quaternionf(interpolatedRot.x, interpolatedRot.y, interpolatedRot.z, interpolatedRot.w);
+        matrixStack.multiply(mcQuat);
     }
 
     /**
-     * Invalidates cached transforms to ensure fresh data.
+     * Applies rotation from a JBullet Transform to a Minecraft MatrixStack (non-interpolated).
      */
-    private void invalidateTransformCache() {
+    private void applyRotationToMatrixStack(MatrixStack matrixStack, Transform bulletTransform) {
+        javax.vecmath.Quat4f bulletRot = new javax.vecmath.Quat4f();
+        bulletTransform.getRotation(bulletRot);
+
+        Quaternionf mcQuat = new Quaternionf(bulletRot.x, bulletRot.y, bulletRot.z, bulletRot.w);
+        matrixStack.multiply(mcQuat);
+    }
+
+    // ----------------------------------------------
+    // CACHE MANAGEMENT
+    // ----------------------------------------------
+
+    /**
+     * Cleans up transform cache entries for grids that no longer exist.
+     */
+    private void cleanupTransformCache(Set<LocalGrid> activeGrids) {
+        transformCache.entrySet().removeIf(entry -> {
+            LocalGrid grid = entry.getKey();
+            return grid == null || grid.isDestroyed() || !activeGrids.contains(grid);
+        });
+    }
+
+    /**
+     * Invalidates the transform cache for all grids.
+     * Call this when the world changes or when major physics updates occur.
+     */
+    public void invalidateTransformCache() {
         transformCache.clear();
     }
 
@@ -431,26 +484,46 @@ public class GridSpaceRenderer implements ILoggingControl {
     // ----------------------------------------------
 
     @Override
-    public boolean stardance$isChatLoggingEnabled() { return false; }
+    public boolean stardance$isChatLoggingEnabled() {
+        return false;
+    }
 
     @Override
-    public boolean stardance$isConsoleLoggingEnabled() { return true; } // Enable logging for debugging
+    public boolean stardance$isConsoleLoggingEnabled() {
+        return true; // Enable logging for debugging
+    }
 
     // ----------------------------------------------
     // HELPER CLASSES
     // ----------------------------------------------
 
     /**
-     * Cached transform data to avoid recomputing transforms every frame.
-     * Now stores the JBullet Transform directly for proper rotation/translation handling.
+     * Cached transform data with interpolation support.
+     * Stores both previous and current transforms for smooth movement.
      */
     private static class CachedTransform {
-        final Transform bulletTransform;
-        final long computeTime;
+        final Transform previousBulletTransform;
+        final Transform currentBulletTransform;
+        long computeTime;
+        boolean needsInitialization;
 
         CachedTransform(Transform bulletTransform, long computeTime) {
-            this.bulletTransform = new Transform(bulletTransform); // Copy to avoid mutation
+            this.previousBulletTransform = new Transform(bulletTransform); // Initialize both to same transform
+            this.currentBulletTransform = new Transform(bulletTransform);
             this.computeTime = computeTime;
+            this.needsInitialization = true;
+        }
+
+        /**
+         * Updates with a new transform, shifting current to previous.
+         */
+        void updateTransform(Transform newTransform, long newComputeTime) {
+            // Shift current to previous
+            this.previousBulletTransform.set(this.currentBulletTransform);
+            // Update current
+            this.currentBulletTransform.set(newTransform);
+            this.computeTime = newComputeTime;
+            this.needsInitialization = false;
         }
     }
 }

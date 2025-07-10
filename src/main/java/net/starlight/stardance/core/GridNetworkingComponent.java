@@ -8,6 +8,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.math.BlockPos;
+import net.starlight.stardance.network.GridNetwork;
 import net.starlight.stardance.utils.SLogger;
 
 import javax.vecmath.Quat4f;
@@ -20,9 +21,8 @@ import static net.starlight.stardance.Stardance.PHYSICS_STATE_UPDATE_PACKET_ID;
 import static net.starlight.stardance.Stardance.serverInstance;
 
 /**
- * Handles network communication for a LocalGrid.
- * Manages transform updates and block synchronization across the network.
- * This class is package-private - external code should use LocalGrid instead.
+ * UPDATED: GridSpace-aware networking component for LocalGrid.
+ * Now sends GridSpace block data and region information to clients.
  */
 class GridNetworkingComponent {
     // ----------------------------------------------
@@ -30,7 +30,7 @@ class GridNetworkingComponent {
     // ----------------------------------------------
     private static final float POSITION_CHANGE_THRESHOLD = 0.001f;
     private static final AtomicInteger packetCounter = new AtomicInteger(0);
-    private static final boolean verbose = false; // Enable for detailed logging
+    private static final boolean verbose = true; // Enable for GridSpace debugging
 
     // ----------------------------------------------
     // PARENT REFERENCE
@@ -53,6 +53,10 @@ class GridNetworkingComponent {
     private long lastPhysicsUpdateTime = 0;
     private int physicsUpdatesCount = 0;
 
+    // NEW: GridSpace network state
+    private boolean gridSpaceInfoSent = false;
+    private boolean initialBlockDataSent = false;
+
     // ----------------------------------------------
     // CONSTRUCTOR
     // ----------------------------------------------
@@ -66,285 +70,223 @@ class GridNetworkingComponent {
     }
 
     // ----------------------------------------------
-    // PUBLIC METHODS
+    // PUBLIC METHODS (UPDATED FOR GRIDSPACE)
     // ----------------------------------------------
-    /**
-     * Handles network updates based on current state.
-     *
-     * @param blocksDirty Whether blocks have changed
-     */
-    public void handleNetworkUpdates(boolean blocksDirty) {
-        // Get rebuild status from physics component
-        boolean rebuildInProgress = grid.getPhysicsComponent().isRebuildInProgress();
 
-        // Send packet to clients once rebuild is complete
-        if (!rebuildInProgress && pendingNetworkUpdate) {
-            sendTransformUpdate(blocksDirty);
-            pendingNetworkUpdate = false;
-            rebuildComplete = true;
-        } else if (!rebuildInProgress && blocksDirty) {
-            // Normal case - blocks changed but not rebuilding
-            sendTransformUpdate(true);
-            rebuildComplete = true;
-        } else if (!rebuildInProgress) {
-            // Just send transform update
-            sendTransformUpdate(false);
-            rebuildComplete = true;
-        } else {
-            rebuildComplete = false;
+    /**
+     * UPDATED: Handles network updates with GridSpace support.
+     * Now sends GridSpace info and blocks instead of local grid data.
+     */
+    public void handleNetworkUpdates() {
+        if (grid.isDestroyed()) {
+            return;
         }
 
-        // Check if we need to send a physics state update
-        if (!rebuildInProgress) {
-            sendPhysicsStateUpdate();
+        // NEW: Send GridSpace info on first update
+        if (!gridSpaceInfoSent) {
+            sendGridSpaceInfo();
+        }
+
+        // Send physics state updates
+        sendPhysicsStateUpdate();
+
+        // NEW: Send initial block data
+        if (!initialBlockDataSent && gridSpaceInfoSent) {
+            sendInitialBlockData();
+        }
+
+        // Handle block updates if dirty
+        if (pendingNetworkUpdate && rebuildComplete) {
+            sendBlockUpdates();
         }
     }
 
     /**
-     * Sends a transform update packet to clients.
-     *
-     * @param sendBlocks Whether to include block data
+     * NEW: Sends GridSpace region information to clients.
+     * This tells clients about the GridSpace region allocated to this grid.
      */
-    private void sendTransformUpdate(boolean sendBlocks) {
-        // Get current transform
-        Transform currentTransform = new Transform();
-        grid.getCurrentTransform(currentTransform);
-
-        // Get current position and rotation
-        Vector3f currentPosition = new Vector3f();
-        currentTransform.origin.get(currentPosition);
-
-        Quat4f currentRotation = new Quat4f();
-        currentTransform.getRotation(currentRotation);
-
-        // Skip if position hasn't changed much
-        if (hasLastSentTransform) {
-            float positionDiff = new org.joml.Vector3f(
-                    lastSentPosition.x,
-                    lastSentPosition.y,
-                    lastSentPosition.z
-            ).distance(currentPosition.x, currentPosition.y, currentPosition.z);
-
-            float rotationDiff = quaternionDifference(lastSentRotation, currentRotation);
-
-            if (positionDiff < POSITION_CHANGE_THRESHOLD && rotationDiff < 0.01f && !sendBlocks) {
-                return;
-            }
-        }
-
-        // Update last sent transform
-        lastSentPosition.set(currentPosition);
-        lastSentRotation.set(currentRotation);
-        hasLastSentTransform = true;
-
-        // Create packet
-        PacketByteBuf buf = PacketByteBufs.create();
-
-        // Write grid ID
-        buf.writeUuid(grid.getGridId());
-
-        // Write transform
-        buf.writeFloat(currentPosition.x);
-        buf.writeFloat(currentPosition.y);
-        buf.writeFloat(currentPosition.z);
-
-        // Write centroid
-        Vector3f centroid = grid.getCentroid();
-        buf.writeFloat(centroid.x);
-        buf.writeFloat(centroid.y);
-        buf.writeFloat(centroid.z);
-
-        // Write rotation
-        buf.writeFloat(currentRotation.x);
-        buf.writeFloat(currentRotation.y);
-        buf.writeFloat(currentRotation.z);
-        buf.writeFloat(currentRotation.w);
-
-        // Write whether blocks are included
-        buf.writeBoolean(sendBlocks);
-
-        // Write blocks if needed
-        if (sendBlocks) {
-            Map<BlockPos, LocalBlock> blocks = grid.getBlocks();
-            buf.writeInt(blocks.size());
-
-            for (Map.Entry<BlockPos, LocalBlock> entry : blocks.entrySet()) {
-                BlockPos pos = entry.getKey();
-                BlockState state = entry.getValue().getState();
-
-                // Write position
-                buf.writeInt(pos.getX());
-                buf.writeInt(pos.getY());
-                buf.writeInt(pos.getZ());
-
-                // Write block state ID
-                int rawId = Block.getRawIdFromState(state);
-                buf.writeInt(rawId);
-            }
-        }
-
-        // Send to clients
-        int packetNum = packetCounter.incrementAndGet();
-        boolean sent = broadcastPacket(TRANSFORM_UPDATE_PACKET_ID, buf);
-
-        if (verbose) {
-            SLogger.log(grid, "Transform packet #" + packetNum + (sent ? " sent" : " FAILED") +
-                    " for grid " + grid.getGridId() +
-                    ", position=" + currentPosition +
-                    ", rotation=" + currentRotation +
-                    ", blocks=" + (sendBlocks ? "included" : "not included"));
-        }
-    }
-
-    /**
-     * Sends a physics state update packet to clients.
-     * This is separate from transform updates and is specifically for rendering.
-     */
-    private void sendPhysicsStateUpdate() {
-        if (grid.getRigidBody() == null) return;
-
-        // Get current physics state
-        Vector3f currentPosition = new Vector3f();
-        Vector3f centroid = grid.getCentroid();
-        Quat4f currentRotation = new Quat4f();
-
-        grid.getRigidBody().getCenterOfMassPosition(currentPosition);
-        grid.getRigidBody().getOrientation(currentRotation);
-
-        // Get current tick count to track timing
-        long currentTickTime = grid.getWorld().getTime();
-
-        // CRITICAL FIX: Always send an update at least once every few ticks
-        boolean forceUpdate = (currentTickTime - lastPhysicsUpdateTime) > 3;
-
-        boolean positionChanged = hasPositionChangedSignificantly(currentPosition, lastSentPhysicsPosition);
-        boolean centroidChanged = hasPositionChangedSignificantly(centroid, lastSentPhysicsCentroid);
-        boolean rotationChanged = hasRotationChangedSignificantly(currentRotation, lastSentPhysicsRotation);
-
-        // Send if something changed or if we need to force an update
-        if (positionChanged || centroidChanged || rotationChanged || forceUpdate) {
-            // Update last sent physics state
-            lastSentPhysicsPosition.set(currentPosition);
-            lastSentPhysicsCentroid.set(centroid);
-            lastSentPhysicsRotation.set(currentRotation);
-            lastPhysicsUpdateTime = currentTickTime;
-            physicsUpdatesCount++;
-
-            // Create packet
-            PacketByteBuf buf = PacketByteBufs.create();
-
-            // Write grid ID
-            buf.writeUuid(grid.getGridId());
-
-            // Write tick time for sequencing
-            buf.writeLong(currentTickTime);
-
-            // Write current position
-            buf.writeFloat(currentPosition.x);
-            buf.writeFloat(currentPosition.y);
-            buf.writeFloat(currentPosition.z);
-
-            // Write centroid
-            buf.writeFloat(centroid.x);
-            buf.writeFloat(centroid.y);
-            buf.writeFloat(centroid.z);
-
-            // Write rotation
-            buf.writeFloat(currentRotation.x);
-            buf.writeFloat(currentRotation.y);
-            buf.writeFloat(currentRotation.z);
-            buf.writeFloat(currentRotation.w);
-
-            // Send to clients
-            int packetNum = packetCounter.incrementAndGet();
-            boolean sent = broadcastPacket(PHYSICS_STATE_UPDATE_PACKET_ID, buf);
+    private void sendGridSpaceInfo() {
+        try {
+            GridNetwork.sendGridSpaceInfo(grid);
+            gridSpaceInfoSent = true;
 
             if (verbose) {
-                SLogger.log(grid, "Physics packet #" + packetNum + (sent ? " sent" : " FAILED") +
-                        " for grid " + grid.getGridId() +
-                        ", tick=" + currentTickTime +
-                        ", pos=" + currentPosition +
-                        ", update #" + physicsUpdatesCount +
-                        (forceUpdate ? " (forced)" : ""));
+                SLogger.log("GridNetworkingComponent", "Sent GridSpace info for grid " + grid.getGridId());
             }
+        } catch (Exception e) {
+            SLogger.log("GridNetworkingComponent", "Error sending GridSpace info: " + e.getMessage());
         }
     }
 
     /**
-     * Broadcasts a packet to all players.
-     *
-     * @return True if the packet was sent to at least one player
+     * NEW: Sends initial block data using GridSpace coordinates.
      */
-    private boolean broadcastPacket(net.minecraft.util.Identifier packetId, PacketByteBuf buf) {
-        if (serverInstance == null) {
-            SLogger.log(grid, "ERROR: serverInstance is null - cannot send packet!");
-            return false;
-        }
+    private void sendInitialBlockData() {
+        try {
+            GridNetwork.sendGridBlocks(grid);
+            initialBlockDataSent = true;
 
-        boolean sentToAnyPlayer = false;
-
-        for (ServerPlayerEntity player : serverInstance.getPlayerManager().getPlayerList()) {
-            try {
-                ServerPlayNetworking.send(player, packetId, buf);
-                sentToAnyPlayer = true;
-            } catch (Exception e) {
-                SLogger.log(grid, "Failed to send packet to player " + player.getName() + ": " + e.getMessage());
+            if (verbose) {
+                SLogger.log("GridNetworkingComponent", "Sent initial GridSpace block data for grid " + grid.getGridId());
             }
+        } catch (Exception e) {
+            SLogger.log("GridNetworkingComponent", "Error sending initial block data: " + e.getMessage());
         }
-
-        return sentToAnyPlayer;
     }
 
     /**
-     * Calculates the angle between two quaternions.
+     * UPDATED: Sends block updates using GridSpace coordinates.
      */
-    private float quaternionDifference(Quat4f q1, Quat4f q2) {
-        float dot = q1.x * q2.x + q1.y * q2.y + q1.z * q2.z + q1.w * q2.w;
-        return (float) Math.acos(Math.min(Math.abs(dot), 1.0f)) * 2.0f;
+    private void sendBlockUpdates() {
+        try {
+            // Send GridSpace block data instead of local grid blocks
+            GridNetwork.sendGridBlocks(grid);
+
+            // Clear pending update flag
+            pendingNetworkUpdate = false;
+
+            if (verbose) {
+                SLogger.log("GridNetworkingComponent", "Sent GridSpace block updates for grid " + grid.getGridId());
+            }
+        } catch (Exception e) {
+            SLogger.log("GridNetworkingComponent", "Error sending block updates: " + e.getMessage());
+        }
     }
 
     /**
-     * Checks if position has changed significantly.
+     * Sends physics state updates (unchanged).
      */
-    private boolean hasPositionChangedSignificantly(Vector3f current, Vector3f previous) {
-        float epsilon = 0.001f;
-        return Math.abs(current.x - previous.x) > epsilon ||
-                Math.abs(current.y - previous.y) > epsilon ||
-                Math.abs(current.z - previous.z) > epsilon;
+    private void sendPhysicsStateUpdate() {
+        try {
+            // Get current physics state
+            Vector3f currentPosition = new Vector3f();
+            Vector3f currentCentroid = grid.getCentroid();
+            Quat4f currentRotation = new Quat4f();
+
+            // Get transform
+            Transform transform = new Transform();
+            grid.getCurrentTransform(transform);
+
+            // Extract position and rotation
+            transform.origin.get(currentPosition);
+            transform.getRotation(currentRotation);
+
+            // Check if we need to send an update
+            boolean shouldSendUpdate = !hasLastSentTransform ||
+                    hasSignificantPositionChange(currentPosition) ||
+                    hasSignificantRotationChange(currentRotation) ||
+                    hasSignificantCentroidChange(currentCentroid) ||
+                    (System.currentTimeMillis() - lastPhysicsUpdateTime > 100); // Force update every 100ms
+
+            if (shouldSendUpdate) {
+                GridNetwork.sendGridState(grid);
+
+                // Update last sent state
+                lastSentPhysicsPosition.set(currentPosition);
+                lastSentPhysicsRotation.set(currentRotation);
+                lastSentPhysicsCentroid.set(currentCentroid);
+                lastPhysicsUpdateTime = System.currentTimeMillis();
+                hasLastSentTransform = true;
+                physicsUpdatesCount++;
+
+                if (verbose && physicsUpdatesCount % 60 == 0) { // Log every 60 updates (3 seconds at 20 TPS)
+                    SLogger.log("GridNetworkingComponent", "Sent physics update #" + physicsUpdatesCount +
+                            " for grid " + grid.getGridId() + " at " + currentPosition);
+                }
+            }
+        } catch (Exception e) {
+            SLogger.log("GridNetworkingComponent", "Error sending physics state: " + e.getMessage());
+        }
     }
 
     /**
-     * Checks if rotation has changed significantly.
+     * Check if position has changed significantly.
      */
-    private boolean hasRotationChangedSignificantly(Quat4f current, Quat4f previous) {
-        float epsilon = 0.001f;
-        return Math.abs(current.x - previous.x) > epsilon ||
-                Math.abs(current.y - previous.y) > epsilon ||
-                Math.abs(current.z - previous.z) > epsilon ||
-                Math.abs(current.w - previous.w) > epsilon;
+    private boolean hasSignificantPositionChange(Vector3f currentPosition) {
+        float dx = Math.abs(currentPosition.x - lastSentPhysicsPosition.x);
+        float dy = Math.abs(currentPosition.y - lastSentPhysicsPosition.y);
+        float dz = Math.abs(currentPosition.z - lastSentPhysicsPosition.z);
+
+        return dx > POSITION_CHANGE_THRESHOLD || dy > POSITION_CHANGE_THRESHOLD || dz > POSITION_CHANGE_THRESHOLD;
+    }
+
+    /**
+     * Check if rotation has changed significantly.
+     */
+    private boolean hasSignificantRotationChange(Quat4f currentRotation) {
+        float threshold = 0.001f;
+
+        float dx = Math.abs(currentRotation.x - lastSentPhysicsRotation.x);
+        float dy = Math.abs(currentRotation.y - lastSentPhysicsRotation.y);
+        float dz = Math.abs(currentRotation.z - lastSentPhysicsRotation.z);
+        float dw = Math.abs(currentRotation.w - lastSentPhysicsRotation.w);
+
+        return dx > threshold || dy > threshold || dz > threshold || dw > threshold;
+    }
+
+    /**
+     * Check if centroid has changed significantly.
+     */
+    private boolean hasSignificantCentroidChange(Vector3f currentCentroid) {
+        float threshold = 0.001f;
+
+        float dx = Math.abs(currentCentroid.x - lastSentPhysicsCentroid.x);
+        float dy = Math.abs(currentCentroid.y - lastSentPhysicsCentroid.y);
+        float dz = Math.abs(currentCentroid.z - lastSentPhysicsCentroid.z);
+
+        return dx > threshold || dy > threshold || dz > threshold;
     }
 
     // ----------------------------------------------
-    // GETTERS / SETTERS
+    // STATE MANAGEMENT (UPDATED)
     // ----------------------------------------------
+
     /**
-     * Sets whether a network update is pending.
+     * Marks that a network update is pending.
      */
     public void setPendingNetworkUpdate(boolean pending) {
         this.pendingNetworkUpdate = pending;
     }
 
     /**
-     * Gets whether a network update is pending.
+     * Sets the rebuild completion state.
      */
-    public boolean isPendingNetworkUpdate() {
-        return pendingNetworkUpdate;
+    public void setRebuildInProgress(boolean inProgress) {
+        this.rebuildComplete = !inProgress;
+
+        // If rebuild is complete and we have pending updates, trigger immediate update
+        if (rebuildComplete && pendingNetworkUpdate) {
+            sendBlockUpdates();
+        }
     }
 
     /**
-     * Checks if the network update is complete.
+     * NEW: Resets GridSpace network state for complete re-sync.
      */
-    public boolean isUpdateComplete() {
-        return rebuildComplete;
+    public void resetGridSpaceState() {
+        gridSpaceInfoSent = false;
+        initialBlockDataSent = false;
+        pendingNetworkUpdate = true;
+    }
+
+    /**
+     * Gets the number of physics updates sent.
+     */
+    public int getPhysicsUpdatesCount() {
+        return physicsUpdatesCount;
+    }
+
+    /**
+     * Gets whether GridSpace info has been sent.
+     */
+    public boolean isGridSpaceInfoSent() {
+        return gridSpaceInfoSent;
+    }
+
+    /**
+     * Gets whether initial block data has been sent.
+     */
+    public boolean isInitialBlockDataSent() {
+        return initialBlockDataSent;
     }
 }

@@ -31,7 +31,7 @@ public class GridRenderingIntegration {
      * @param vertexConsumers Vertex consumers from world renderer
      * @param camera Camera position for culling
      */
-    public static void renderAllGrids(MatrixStack matrixStack, VertexConsumerProvider vertexConsumers, Vec3d camera) {
+    public static void renderAllGrids(MatrixStack matrixStack, VertexConsumerProvider vertexConsumers, Vec3d camera, float tickDelta) {
         System.out.println("=== GridRenderingIntegration.renderAllGrids() called ===");
         System.out.println("Camera position: " + camera);
 
@@ -94,7 +94,7 @@ public class GridRenderingIntegration {
             }
 
             // Render all grids using VS2-style projection
-            gridRenderer.renderGrids(matrixStack, vertexConsumers, camera, grids);
+            gridRenderer.renderGrids(grids, matrixStack, vertexConsumers, camera, tickDelta);
 
         } catch (Exception e) {
             // Log error but don't crash rendering
