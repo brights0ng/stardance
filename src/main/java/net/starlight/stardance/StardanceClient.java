@@ -18,8 +18,6 @@ import net.starlight.stardance.network.GridNetwork;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.render.CollisionShapeRenderer;
 import net.starlight.stardance.render.DebugRenderer;
-import net.starlight.stardance.render.GridRenderingIntegration;
-import net.starlight.stardance.render.GridSpaceRenderer;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.KeybindRegistry;
 import net.starlight.stardance.utils.SLogger;
@@ -97,8 +95,6 @@ public class StardanceClient implements ClientModInitializer, ILoggingControl {
         // Periodic cleanup
         if (client.world != null) {
             ClientGridManager registry = ClientGridManager.getInstance();
-
-            // Here we could do periodic cleanup if needed
         }
     }
 
