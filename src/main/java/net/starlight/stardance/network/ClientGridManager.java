@@ -254,5 +254,5 @@ public class ClientGridManager implements ILoggingControl {
     public boolean stardance$isChatLoggingEnabled() { return false; }
 
     @Override
-    public boolean stardance$isConsoleLoggingEnabled() { return true; }
+    public boolean stardance$isConsoleLoggingEnabled() { return false; }
 }

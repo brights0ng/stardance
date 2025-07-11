@@ -84,27 +84,27 @@ class GridNetworkingComponent {
 
         if (grid.isDestroyed()) {
             if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
-                SLogger.log("GridNetworkingComponent", "Grid " + grid.getGridId() + " is destroyed, skipping network updates");
+//                SLogger.log("GridNetworkingComponent", "Grid " + grid.getGridId() + " is destroyed, skipping network updates");
             }
             return;
         }
 
         // DEBUG: Log call frequency
         if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
-            SLogger.log("GridNetworkingComponent", "handleNetworkUpdates() call #" + handleNetworkUpdatesCallCount +
-                    " for grid " + grid.getGridId());
-            SLogger.log("GridNetworkingComponent", "  State: gridSpaceInfoSent=" + gridSpaceInfoSent +
-                    ", initialBlockDataSent=" + initialBlockDataSent +
-                    ", pendingNetworkUpdate=" + pendingNetworkUpdate +
-                    ", rebuildComplete=" + rebuildComplete);
+//            SLogger.log("GridNetworkingComponent", "handleNetworkUpdates() call #" + handleNetworkUpdatesCallCount +
+//                    " for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "  State: gridSpaceInfoSent=" + gridSpaceInfoSent +
+//                    ", initialBlockDataSent=" + initialBlockDataSent +
+//                    ", pendingNetworkUpdate=" + pendingNetworkUpdate +
+//                    ", rebuildComplete=" + rebuildComplete);
         }
 
         // NEW: Send GridSpace info on first update
         if (!gridSpaceInfoSent) {
-            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send GridSpace info for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send GridSpace info for grid " + grid.getGridId());
             sendGridSpaceInfo();
         } else if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
-            SLogger.log("GridNetworkingComponent", "GridSpace info already sent for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "GridSpace info already sent for grid " + grid.getGridId());
         }
 
         // Send physics state updates
@@ -112,17 +112,17 @@ class GridNetworkingComponent {
 
         // NEW: Send initial block data
         if (!initialBlockDataSent && gridSpaceInfoSent) {
-            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send initial block data for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send initial block data for grid " + grid.getGridId());
             sendInitialBlockData();
         } else if (!initialBlockDataSent) {
             if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
-                SLogger.log("GridNetworkingComponent", "Waiting for GridSpace info before sending block data for grid " + grid.getGridId());
+//                SLogger.log("GridNetworkingComponent", "Waiting for GridSpace info before sending block data for grid " + grid.getGridId());
             }
         }
 
         // Handle block updates if dirty
         if (pendingNetworkUpdate && rebuildComplete) {
-            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send block updates for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "ATTEMPTING to send block updates for grid " + grid.getGridId());
             sendBlockUpdates();
         }
     }
@@ -132,26 +132,26 @@ class GridNetworkingComponent {
      */
     private void sendGridSpaceInfo() {
         try {
-            SLogger.log("GridNetworkingComponent", "sendGridSpaceInfo() called for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "sendGridSpaceInfo() called for grid " + grid.getGridId());
 
             // Check if we have a valid GridSpace region
             if (grid.getGridSpaceRegion() == null) {
-                SLogger.log("GridNetworkingComponent", "ERROR: No GridSpace region for grid " + grid.getGridId());
+//                SLogger.log("GridNetworkingComponent", "ERROR: No GridSpace region for grid " + grid.getGridId());
                 return;
             }
 
             if (grid.getGridSpaceRegion().isCleanedUp()) {
-                SLogger.log("GridNetworkingComponent", "ERROR: GridSpace region is cleaned up for grid " + grid.getGridId());
+//                SLogger.log("GridNetworkingComponent", "ERROR: GridSpace region is cleaned up for grid " + grid.getGridId());
                 return;
             }
 
-            SLogger.log("GridNetworkingComponent", "GridSpace region is valid, calling GridNetwork.sendGridSpaceInfo()");
+//            SLogger.log("GridNetworkingComponent", "GridSpace region is valid, calling GridNetwork.sendGridSpaceInfo()");
             GridNetwork.sendGridSpaceInfo(grid);
             gridSpaceInfoSent = true;
 
-            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent GridSpace info for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent GridSpace info for grid " + grid.getGridId());
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "ERROR sending GridSpace info for grid " + grid.getGridId() + ": " + e.getMessage());
+//            SLogger.log("GridNetworkingComponent", "ERROR sending GridSpace info for grid " + grid.getGridId() + ": " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -161,14 +161,14 @@ class GridNetworkingComponent {
      */
     private void sendInitialBlockData() {
         try {
-            SLogger.log("GridNetworkingComponent", "sendInitialBlockData() called for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "sendInitialBlockData() called for grid " + grid.getGridId());
 
             GridNetwork.sendGridBlocks(grid);
             initialBlockDataSent = true;
 
-            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent initial GridSpace block data for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent initial GridSpace block data for grid " + grid.getGridId());
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "ERROR sending initial block data for grid " + grid.getGridId() + ": " + e.getMessage());
+//            SLogger.log("GridNetworkingComponent", "ERROR sending initial block data for grid " + grid.getGridId() + ": " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -178,7 +178,7 @@ class GridNetworkingComponent {
      */
     private void sendBlockUpdates() {
         try {
-            SLogger.log("GridNetworkingComponent", "sendBlockUpdates() called for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "sendBlockUpdates() called for grid " + grid.getGridId());
 
             // Send GridSpace block data instead of local grid blocks
             GridNetwork.sendGridBlocks(grid);
@@ -186,9 +186,9 @@ class GridNetworkingComponent {
             // Clear pending update flag
             pendingNetworkUpdate = false;
 
-            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent GridSpace block updates for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "SUCCESS: Sent GridSpace block updates for grid " + grid.getGridId());
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "ERROR sending block updates for grid " + grid.getGridId() + ": " + e.getMessage());
+//            SLogger.log("GridNetworkingComponent", "ERROR sending block updates for grid " + grid.getGridId() + ": " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -204,8 +204,8 @@ class GridNetworkingComponent {
             // If we've already sent an update this tick, absolutely refuse to send another
             if (lastPhysicsUpdateTime == currentServerTick) {
                 if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
-                    SLogger.log("GridNetworkingComponent", "BLOCKED duplicate physics update for grid " + grid.getGridId() +
-                            " - already sent this tick (" + currentServerTick + ")");
+//                    SLogger.log("GridNetworkingComponent", "BLOCKED duplicate physics update for grid " + grid.getGridId() +
+//                            " - already sent this tick (" + currentServerTick + ")");
                 }
                 return;
             }
@@ -238,18 +238,18 @@ class GridNetworkingComponent {
                 physicsUpdatesCount++;
 
                 if (verbose) {
-                    SLogger.log("GridNetworkingComponent", "SENT physics update #" + physicsUpdatesCount +
-                            " for grid " + grid.getGridId() + " at tick " + currentServerTick +
-                            ", pos=" + currentPosition);
+//                    SLogger.log("GridNetworkingComponent", "SENT physics update #" + physicsUpdatesCount +
+//                            " for grid " + grid.getGridId() + " at tick " + currentServerTick +
+//                            ", pos=" + currentPosition);
                 }
             } else {
                 if (verbose && handleNetworkUpdatesCallCount % 60 == 0) {
-                    SLogger.log("GridNetworkingComponent", "SKIPPED physics update for grid " + grid.getGridId() +
-                            " - no significant change or same tick");
+//                    SLogger.log("GridNetworkingComponent", "SKIPPED physics update for grid " + grid.getGridId() +
+//                            " - no significant change or same tick");
                 }
             }
         } catch (Exception e) {
-            SLogger.log("GridNetworkingComponent", "Error sending physics state for grid " + grid.getGridId() + ": " + e.getMessage());
+//            SLogger.log("GridNetworkingComponent", "Error sending physics state for grid " + grid.getGridId() + ": " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -302,7 +302,7 @@ class GridNetworkingComponent {
     public void setPendingNetworkUpdate(boolean pending) {
         this.pendingNetworkUpdate = pending;
         if (verbose) {
-            SLogger.log("GridNetworkingComponent", "Set pending network update to " + pending + " for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "Set pending network update to " + pending + " for grid " + grid.getGridId());
         }
     }
 
@@ -313,12 +313,12 @@ class GridNetworkingComponent {
         this.rebuildComplete = !inProgress;
 
         if (verbose) {
-            SLogger.log("GridNetworkingComponent", "Set rebuild in progress to " + inProgress + " for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "Set rebuild in progress to " + inProgress + " for grid " + grid.getGridId());
         }
 
         // If rebuild is complete and we have pending updates, trigger immediate update
         if (rebuildComplete && pendingNetworkUpdate) {
-            SLogger.log("GridNetworkingComponent", "Rebuild complete with pending updates, triggering block updates for grid " + grid.getGridId());
+//            SLogger.log("GridNetworkingComponent", "Rebuild complete with pending updates, triggering block updates for grid " + grid.getGridId());
             sendBlockUpdates();
         }
     }
@@ -331,7 +331,7 @@ class GridNetworkingComponent {
         initialBlockDataSent = false;
         pendingNetworkUpdate = true;
 
-        SLogger.log("GridNetworkingComponent", "Reset GridSpace state for grid " + grid.getGridId());
+//        SLogger.log("GridNetworkingComponent", "Reset GridSpace state for grid " + grid.getGridId());
     }
 
     /**

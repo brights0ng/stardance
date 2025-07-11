@@ -213,15 +213,21 @@ public class TransformationAPI implements ILoggingControl {
      */
     public Vec3d gridLocalToWorld(LocalGrid grid, Vector3d gridLocalPoint) {
         try {
-            // Get the current physics transform
+            // CRITICAL FIX: Subtract centroid offset first
+            Vector3f adjustedPoint = new Vector3f(
+                    (float) gridLocalPoint.x - grid.getCentroid().x,  // <-- Subtract centroid
+                    (float) gridLocalPoint.y - grid.getCentroid().y,
+                    (float) gridLocalPoint.z - grid.getCentroid().z
+            );
+
+            // Get the current physics transform (origin at centroid)
             Transform physicsTransform = TEMP_TRANSFORM.get();
             grid.getCurrentTransform(physicsTransform);
 
-            // Apply transform to grid-local point
-            Vector3f worldPoint = new Vector3f((float) gridLocalPoint.x, (float) gridLocalPoint.y, (float) gridLocalPoint.z);
-            physicsTransform.transform(worldPoint);
+            // Apply transform
+            physicsTransform.transform(adjustedPoint);
 
-            return new Vec3d(worldPoint.x, worldPoint.y, worldPoint.z);
+            return new Vec3d(adjustedPoint.x, adjustedPoint.y, adjustedPoint.z);
 
         } catch (Exception e) {
             SLogger.log(this, "Error transforming grid-local to world: " + e.getMessage());

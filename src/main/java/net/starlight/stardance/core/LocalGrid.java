@@ -90,7 +90,7 @@ public class LocalGrid implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true; // Enable for GridSpace integration logging
+        return false; // Enable for GridSpace integration logging
     }
 
     // ----------------------------------------------
@@ -150,6 +150,11 @@ public class LocalGrid implements ILoggingControl {
         addBlock(new LocalBlock(new BlockPos(0, 0, 0), firstBlockState));
 
         SLogger.log(this, "LocalGrid " + gridId + " created successfully with GridSpace integration");
+
+        // After grid creation, force it to sleep
+        getRigidBody().setLinearVelocity(new Vector3f(0, 0, 0));
+        getRigidBody().setAngularVelocity(new Vector3f(0, 0, 0));
+        getRigidBody().setActivationState(com.bulletphysics.collision.dispatch.CollisionObject.ISLAND_SLEEPING);
     }
 
     // ----------------------------------------------
@@ -314,6 +319,16 @@ public class LocalGrid implements ILoggingControl {
 
         // Update render component with latest physics state - after completing physics update
         renderComponent.updateRenderState(physicsComponent.getRigidBody());
+
+        if (Math.random() < 0.01) { // 1% chance per tick
+            Vector3f pos = new Vector3f();
+            Vector3f vel = new Vector3f();
+            getRigidBody().getCenterOfMassPosition(pos);
+            getRigidBody().getLinearVelocity(vel);
+
+            SLogger.log(this, String.format("Physics: pos=(%.6f,%.6f,%.6f) vel=(%.6f,%.6f,%.6f)",
+                    pos.x, pos.y, pos.z, vel.x, vel.y, vel.z));
+        }
     }
 
     /**

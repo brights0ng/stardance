@@ -41,7 +41,7 @@ public class StardanceClient implements ClientModInitializer, ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true;
+        return false;
     }
 
     // --------------------------------------------------
