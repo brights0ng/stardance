@@ -220,7 +220,7 @@ public class CommandRegistry implements ILoggingControl {
             return 0;
         }
 
-        net.starlight.stardance.debug.VisualRaycastDebugger.visualizePlayerRaycast(player);
+        net.starlight.stardance.debug.ComprehensiveRaycastDebugger.debugComprehensiveRaycast(player);
         context.getSource().sendFeedback(Text.literal("§6Visual raycast debug activated - check the world!"));
         return 1;
     }

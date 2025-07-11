@@ -5,6 +5,7 @@ import com.bulletphysics.linearmath.Transform;
 import net.minecraft.block.BlockState;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 import net.starlight.stardance.gridspace.GridSpaceManager;
 import net.starlight.stardance.gridspace.GridSpaceRegion;
 import net.starlight.stardance.gridspace.GridSpaceBlockManager;
@@ -509,6 +510,27 @@ public class LocalGrid implements ILoggingControl {
      */
     public Vector3d worldToGridLocal(Vector3d worldPoint) {
         return physicsComponent.worldToGridLocal(worldPoint);
+    }
+
+    /**
+     * Converts a point from grid-local space to world space.
+     * This is the reverse of worldToGridLocal().
+     *
+     * @param gridLocalPoint Point in grid-local coordinates
+     * @return Point in world coordinates
+     */
+    public Vec3d gridLocalToWorld(javax.vecmath.Vector3d gridLocalPoint) {
+        return physicsComponent.gridLocalToWorld(gridLocalPoint);
+    }
+
+    /**
+     * Convenience method for Vec3d input.
+     */
+    public Vec3d gridLocalToWorld(Vec3d gridLocalPoint) {
+        javax.vecmath.Vector3d point = new javax.vecmath.Vector3d(
+                gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z
+        );
+        return gridLocalToWorld(point);
     }
 
     /**

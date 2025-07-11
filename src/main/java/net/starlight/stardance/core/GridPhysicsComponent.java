@@ -12,6 +12,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.shape.VoxelShape;
 import net.starlight.stardance.physics.SubchunkCoordinates;
 import net.starlight.stardance.utils.SLogger;
@@ -265,6 +266,42 @@ class GridPhysicsComponent {
         temp.add(this.centroid);
 
         return new Vector3d(temp.x, temp.y, temp.z);
+    }
+
+    /**
+     * Converts a point from grid-local space to world space using physics transform.
+     * This is the reverse operation of worldToGridLocal().
+     *
+     * @param gridLocalPoint Point in grid-local coordinates
+     * @return Point in world coordinates
+     */
+    public Vec3d gridLocalToWorld(javax.vecmath.Vector3d gridLocalPoint) {
+        if (rigidBody == null) {
+            // No physics body - return point as-is (shouldn't happen in normal use)
+            return new Vec3d(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
+        }
+
+        try {
+            // CRITICAL: Subtract centroid offset first (reverse of worldToGridLocal)
+            Vector3f adjustedPoint = new Vector3f(
+                    (float) gridLocalPoint.x - this.centroid.x,
+                    (float) gridLocalPoint.y - this.centroid.y,
+                    (float) gridLocalPoint.z - this.centroid.z
+            );
+
+            // Get the current physics transform (grid → world)
+            Transform physicsTransform = new Transform();
+            rigidBody.getWorldTransform(physicsTransform);
+
+            // Apply transform (NOT inverse - this goes grid → world)
+            physicsTransform.transform(adjustedPoint);
+
+            return new Vec3d(adjustedPoint.x, adjustedPoint.y, adjustedPoint.z);
+
+        } catch (Exception e) {
+            SLogger.log(grid, "Error transforming grid-local to world: " + e.getMessage());
+            return new Vec3d(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
+        }
     }
 
     /**

@@ -6,7 +6,8 @@
   "mixins": [
     "accessors.EntityAccessor",
     "physics.MixinEntity",
-    "feature.block_interaction.MixinEntityRaycast"
+    "feature.block_interaction.MixinEntityRaycast",
+    "feature.block_interaction.MixinServerPlayerInteractionManagerBreaking"
   ],
   "injectors": {
     "defaultRequire": 1

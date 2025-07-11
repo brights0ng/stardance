@@ -50,45 +50,87 @@ public class TransformationAPI implements ILoggingControl {
      * @param world The world
      * @return GridSpaceTransformResult containing grid and GridSpace coordinates, or empty if not on a grid
      */
+    // Add this method to your TransformationAPI class
+
+    /**
+     * ENHANCED DEBUG: Logs detailed information about worldToGridSpace transformation.
+     */
     public Optional<GridSpaceTransformResult> worldToGridSpace(Vec3d worldPos, World world) {
+        SLogger.log(this, "=== TRANSFORMATION API DEBUG ===");
+        SLogger.log(this, "Input world position: " + worldPos);
+        SLogger.log(this, "World: " + (world.isClient ? "CLIENT" : "SERVER"));
+
         // Find which grid (if any) contains this world position
-        Optional<LocalGrid> gridOpt = findGridAtWorldPosition(worldPos, world);
-        if (gridOpt.isEmpty()) {
+        SLogger.log(this, "Looking for grids at world position...");
+
+        PhysicsEngine engine = engineManager.getEngine(world);
+        if (engine == null) {
+            SLogger.log(this, "ERROR: No physics engine for world");
             return Optional.empty();
         }
 
-        LocalGrid grid = gridOpt.get();
+        SLogger.log(this, "Physics engine found, checking " + engine.getGrids().size() + " grids");
 
-        try {
-            // Transform world → grid-local (KEEP CONTINUOUS COORDINATES)
-            Vector3d worldPoint = new Vector3d(worldPos.x, worldPos.y, worldPos.z);
-            Vector3d gridLocalPoint = grid.worldToGridLocal(worldPoint);
+        for (LocalGrid grid : engine.getGrids()) {
+            SLogger.log(this, "Checking grid " + grid.getGridId());
 
-            // FIXED: Keep continuous coordinates for round-trip accuracy
-            Vec3d gridLocalVec = new Vec3d(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
+            // Check AABB first (faster)
+            if (isWorldPositionInGridAABB(worldPos, grid)) {
+                SLogger.log(this, "  Position is within grid AABB");
 
-            // Convert to discrete BlockPos for block-based operations (but keep continuous for round-trip)
-            BlockPos gridLocalPos = new BlockPos(
-                    (int) Math.floor(gridLocalPoint.x),
-                    (int) Math.floor(gridLocalPoint.y),
-                    (int) Math.floor(gridLocalPoint.z)
-            );
+                // Check actual block existence
+                if (isWorldPositionInGrid(worldPos, grid)) {
+                    SLogger.log(this, "  Position has actual block - GRID FOUND!");
 
-            // Transform CONTINUOUS grid-local → GridSpace for accuracy
-            Vec3d gridSpaceVec = gridLocalToGridSpaceVec3d(grid, gridLocalVec);
+                    try {
+                        // Transform world → grid-local (KEEP CONTINUOUS COORDINATES)
+                        Vector3d worldPoint = new Vector3d(worldPos.x, worldPos.y, worldPos.z);
+                        Vector3d gridLocalPoint = grid.worldToGridLocal(worldPoint);
 
-            // Also provide discrete GridSpace coordinates for block operations
-            BlockPos gridSpacePos = grid.gridLocalToGridSpace(gridLocalPos);
+                        SLogger.log(this, "  Grid-local point: " + gridLocalPoint);
 
-            SLogger.log(this, String.format("Transformed world %s → grid-local %s → GridSpace %s",
-                    worldPos, gridLocalPoint, gridSpacePos));
+                        // FIXED: Keep continuous coordinates for round-trip accuracy
+                        Vec3d gridLocalVec = new Vec3d(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
 
-            return Optional.of(new GridSpaceTransformResult(grid, gridSpacePos, gridSpaceVec, gridLocalVec, gridLocalPos));
+                        // Convert to discrete BlockPos for block-based operations
+                        BlockPos gridLocalPos = new BlockPos(
+                                (int) Math.floor(gridLocalPoint.x),
+                                (int) Math.floor(gridLocalPoint.y),
+                                (int) Math.floor(gridLocalPoint.z)
+                        );
 
-        } catch (Exception e) {
-            SLogger.log(this, "Error transforming world to GridSpace: " + e.getMessage());
-            return Optional.empty();
+                        SLogger.log(this, "  Grid-local BlockPos: " + gridLocalPos);
+
+                        // Transform CONTINUOUS grid-local → GridSpace for accuracy
+                        Vec3d gridSpaceVec = gridLocalToGridSpaceVec3d(grid, gridLocalVec);
+
+                        // Also provide discrete GridSpace coordinates for block operations
+                        BlockPos gridSpacePos = grid.gridLocalToGridSpace(gridLocalPos);
+
+                        SLogger.log(this, "  GridSpace vec: " + gridSpaceVec);
+                        SLogger.log(this, "  GridSpace BlockPos: " + gridSpacePos);
+
+                        GridSpaceTransformResult result = new GridSpaceTransformResult(
+                                grid, gridSpacePos, gridSpaceVec, gridLocalVec, gridLocalPos);
+
+                        SLogger.log(this, "=== TRANSFORMATION SUCCESS ===");
+                        return Optional.of(result);
+
+                    } catch (Exception e) {
+                        SLogger.log(this, "  ERROR during transformation: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                } else {
+                    SLogger.log(this, "  Position is in AABB but no block found");
+                }
+            } else {
+                SLogger.log(this, "  Position is outside grid AABB");
+            }
         }
+
+        SLogger.log(this, "No grid found at position");
+        SLogger.log(this, "=== TRANSFORMATION FAILED ===");
+        return Optional.empty();
     }
 
     /**
