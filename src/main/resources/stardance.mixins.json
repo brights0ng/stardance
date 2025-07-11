@@ -2,9 +2,11 @@
   "required": true,
   "package": "net.starlight.stardance.mixin",
   "compatibilityLevel": "JAVA_17",
+  "plugin": "net.starlight.stardance.mixin.StardanceMixinPlugin",
   "mixins": [
     "accessors.EntityAccessor",
-    "physics.MixinEntity"
+    "physics.MixinEntity",
+    "feature.block_interaction.MixinEntityRaycast"
   ],
   "injectors": {
     "defaultRequire": 1
