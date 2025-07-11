@@ -3,17 +3,14 @@ package net.starlight.stardance.core;
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.linearmath.Transform;
 import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.starlight.stardance.gridspace.GridSpaceManager;
 import net.starlight.stardance.gridspace.GridSpaceRegion;
 import net.starlight.stardance.gridspace.GridSpaceBlockManager;
-import net.starlight.stardance.interaction.GridFurnaceBlockEntity;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
-import net.starlight.stardance.network.GridNetwork;
 
 import javax.vecmath.Quat4f;
 import javax.vecmath.Vector3d;
@@ -39,7 +36,7 @@ public class LocalGrid implements ILoggingControl {
     private long lastProcessedTick;
 
     /** Offset to center grid-local coordinates within the GridSpace region */
-    private static final int GRIDSPACE_CENTER_OFFSET = 512; // Half of 1024x1024x1024 region size
+    public static final int GRIDSPACE_CENTER_OFFSET = 512; // Half of 1024x1024x1024 region size
 
     // ----------------------------------------------
     // CORE PROPERTIES
