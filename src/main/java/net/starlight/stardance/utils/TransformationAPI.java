@@ -204,23 +204,24 @@ public class TransformationAPI implements ILoggingControl {
     }
 
     /**
-     * Checks if a world position is within the bounds of a grid.
+     * FIXED: Uses physics collision shapes instead of block-by-block checking.
      */
     public boolean isWorldPositionInGrid(Vec3d worldPos, LocalGrid grid) {
         try {
-            // Transform world position to grid-local space
-            Vector3d worldPoint = new Vector3d(worldPos.x, worldPos.y, worldPos.z);
-            Vector3d gridLocalPoint = grid.worldToGridLocal(worldPoint);
+            // First check AABB for performance
+            if (!isWorldPositionInGridAABB(worldPos, grid)) {
+                return false;
+            }
 
-            // Check if this grid-local position has a block
-            BlockPos gridLocalPos = new BlockPos(
-                    (int) Math.floor(gridLocalPoint.x),
-                    (int) Math.floor(gridLocalPoint.y),
-                    (int) Math.floor(gridLocalPoint.z)
-            );
+            // Use physics raycast to check collision shape
+            // Cast a very short ray from the position to see if it hits the grid
+            Vec3d shortOffset = new Vec3d(0.01, 0, 0); // 1cm offset
 
-            // Check if there's actually a block at this position
-            return grid.getBlock(gridLocalPos) != null;
+            PhysicsEngine engine = engineManager.getEngine(grid.getWorld());
+            Optional<PhysicsEngine.PhysicsRaycastResult> result =
+                    engine.raycastGrids(worldPos, worldPos.add(shortOffset));
+
+            return result.isPresent() && result.get().grid.equals(grid);
 
         } catch (Exception e) {
             return false;

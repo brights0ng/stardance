@@ -1,19 +1,31 @@
 package net.starlight.stardance.debug;
 
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.minecraft.block.BlockState;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.World;
 import net.starlight.stardance.core.LocalGrid;
+import net.starlight.stardance.gridspace.GridSpaceManager;
+import net.starlight.stardance.gridspace.GridSpaceRegion;
+import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 import net.starlight.stardance.utils.TransformationAPI;
 
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+
+import static net.starlight.stardance.Stardance.engineManager;
 
 /**
  * Manages debug state and utilities for the interaction system.
@@ -284,11 +296,7 @@ public class InteractionDebugManager implements ILoggingControl {
         }
     }
 
-    /**
-     * Debug method: Gets detailed raycast information for debugging commands.
-     */
     private static InteractionDebugManager.RaycastDebugInfo getDebugInfo(Entity entity, double maxDistance) {
-
         // Perform raycast
         HitResult result = entity.raycast(maxDistance, 0.0f, false);
 
@@ -296,27 +304,132 @@ public class InteractionDebugManager implements ILoggingControl {
             return new InteractionDebugManager.RaycastDebugInfo("No hit within " + maxDistance + " blocks", null, null, null);
         }
 
-        Vec3d worldPos = result.getPos();
+        if (result instanceof BlockHitResult) {
+            BlockHitResult blockResult = (BlockHitResult) result;
+            Vec3d worldPos = blockResult.getPos();
+            BlockPos blockPos = blockResult.getBlockPos();
 
-        // Check for grid intersection
-        Optional<TransformationAPI.GridSpaceTransformResult> gridTransform =
-                TransformationAPI.getInstance().worldToGridSpace(worldPos, entity.getWorld());
+            // Check if this is a GridSpace coordinate (>= 25M range)
+            if (isGridSpaceCoordinate(blockPos)) {
+                // This is already a grid hit! Extract grid information.
+                LocalGrid grid = findGridForGridSpacePosition(blockPos, entity.getWorld());
 
-        if (gridTransform.isPresent()) {
-            TransformationAPI.GridSpaceTransformResult transform = gridTransform.get();
-            return new InteractionDebugManager.RaycastDebugInfo(
-                    "Hit grid block",
-                    worldPos,
-                    transform.gridSpaceVec,
-                    transform.grid
-            );
-        } else {
-            return new InteractionDebugManager.RaycastDebugInfo(
-                    "Hit world block",
-                    worldPos,
-                    null,
-                    null
-            );
+                if (grid != null) {
+                    return new InteractionDebugManager.RaycastDebugInfo(
+                            "Hit grid block (via physics)",
+                            worldPos,
+                            new Vec3d(blockPos.getX(), blockPos.getY(), blockPos.getZ()),
+                            grid
+                    );
+                } else {
+                    return new InteractionDebugManager.RaycastDebugInfo(
+                            "Hit GridSpace coordinates but no grid found",
+                            worldPos,
+                            new Vec3d(blockPos.getX(), blockPos.getY(), blockPos.getZ()),
+                            null
+                    );
+                }
+            }
+
+            // Not GridSpace - try old transformation method for world blocks
+            Optional<TransformationAPI.GridSpaceTransformResult> gridTransform =
+                    TransformationAPI.getInstance().worldToGridSpace(worldPos, entity.getWorld());
+
+            if (gridTransform.isPresent()) {
+                TransformationAPI.GridSpaceTransformResult transform = gridTransform.get();
+                return new InteractionDebugManager.RaycastDebugInfo(
+                        "Hit grid block (via transformation)",
+                        worldPos,
+                        transform.gridSpaceVec,
+                        transform.grid
+                );
+            } else {
+                return new InteractionDebugManager.RaycastDebugInfo(
+                        "Hit world block",
+                        worldPos,
+                        null,
+                        null
+                );
+            }
         }
+
+        return new InteractionDebugManager.RaycastDebugInfo("Unknown hit type", null, null, null);
+    }
+
+    /**
+     * Checks if coordinates are in GridSpace range (>= 25M).
+     */
+    private static boolean isGridSpaceCoordinate(BlockPos pos) {
+        return pos.getX() >= 20_000_000 || pos.getZ() >= 20_000_000;
+    }
+
+    private static LocalGrid findGridForGridSpacePosition(BlockPos gridSpacePos, World world) {
+        try {
+            PhysicsEngine engine = engineManager.getEngine(world);
+            if (engine == null) return null;
+
+            for (LocalGrid grid : engine.getGrids()) {
+                if (grid.isDestroyed()) continue;
+
+                try {
+                    // Convert GridSpace → grid-local coordinates
+                    BlockPos gridLocalPos = grid.gridSpaceToGridLocal(gridSpacePos);
+
+                    // Check if this grid-local position is within valid bounds
+                    if (grid.isValidGridLocalPosition(gridLocalPos)) {
+
+                        // ENHANCED: Check the hit position AND nearby positions
+                        BlockState blockState = findNearbyBlock(grid, gridLocalPos);
+
+                        if (blockState != null) {
+                            return grid; // Found the grid!
+                        }
+                    }
+                } catch (Exception e) {
+                    continue;
+                }
+            }
+
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Checks the exact position and nearby positions for a block.
+     * This handles cases where physics raycast hits block edges.
+     */
+    private static BlockState findNearbyBlock(LocalGrid grid, BlockPos centerPos) {
+        // Check the exact position first
+        BlockState blockState = grid.getBlock(centerPos);
+        if (blockState != null) {
+            SLogger.log("InteractionDebugManager", "  Block found at exact position: " + centerPos);
+            return blockState;
+        }
+
+        // Check adjacent positions (6 directions)
+        BlockPos[] adjacentPositions = {
+                centerPos.add(1, 0, 0),   // +X
+                centerPos.add(-1, 0, 0),  // -X
+                centerPos.add(0, 1, 0),   // +Y
+                centerPos.add(0, -1, 0),  // -Y
+                centerPos.add(0, 0, 1),   // +Z
+                centerPos.add(0, 0, -1)   // -Z
+        };
+
+        for (BlockPos adjacentPos : adjacentPositions) {
+            if (grid.isValidGridLocalPosition(adjacentPos)) {
+                blockState = grid.getBlock(adjacentPos);
+                if (blockState != null) {
+                    SLogger.log("InteractionDebugManager", "  Block found at adjacent position: " + adjacentPos +
+                            " (offset from " + centerPos + ")");
+                    return blockState;
+                }
+            }
+        }
+
+        SLogger.log("InteractionDebugManager", "  No block found at " + centerPos + " or adjacent positions");
+        return null;
     }
 }

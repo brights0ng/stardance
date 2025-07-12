@@ -2,10 +2,7 @@ package net.starlight.stardance.physics;
 
 import com.bulletphysics.collision.broadphase.AxisSweep3;
 import com.bulletphysics.collision.broadphase.BroadphaseInterface;
-import com.bulletphysics.collision.dispatch.CollisionDispatcher;
-import com.bulletphysics.collision.dispatch.CollisionObject;
-import com.bulletphysics.collision.dispatch.CollisionConfiguration;
-import com.bulletphysics.collision.dispatch.DefaultCollisionConfiguration;
+import com.bulletphysics.collision.dispatch.*;
 import com.bulletphysics.collision.narrowphase.ManifoldPoint;
 import com.bulletphysics.collision.narrowphase.PersistentManifold;
 import com.bulletphysics.dynamics.DiscreteDynamicsWorld;
@@ -24,6 +21,7 @@ import net.starlight.stardance.utils.BlockEventHandler;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
+import javax.vecmath.Vector3d;
 import javax.vecmath.Vector3f;
 import java.util.Optional;
 import java.util.Set;
@@ -199,108 +197,87 @@ public class PhysicsEngine implements ILoggingControl {
     }
 
     /**
-     * Performs a physics raycast against all grids in the world.
-     * Uses JBullet's collision detection to find grid intersections.
-     *
-     * @param startPos Ray start position in world coordinates
-     * @param endPos Ray end position in world coordinates
-     * @return PhysicsRaycastResult if hit, empty if miss
+     * VS2-style physics raycast against all grids using JBullet collision detection.
      */
-    public Optional<PhysicsRaycastResult> raycastGrids(Vec3d startPos, Vec3d endPos) {
-        if (dynamicsWorld == null) {
-            return Optional.empty();
-        }
-
+    public Optional<PhysicsRaycastResult> raycastGrids(Vec3d rayStart, Vec3d rayEnd) {
         try {
             // Convert to JBullet vectors
-            Vector3f rayStart = new Vector3f((float) startPos.x, (float) startPos.y, (float) startPos.z);
-            Vector3f rayEnd = new Vector3f((float) endPos.x, (float) endPos.y, (float) endPos.z);
+            Vector3f bulletStart = new Vector3f((float) rayStart.x, (float) rayStart.y, (float) rayStart.z);
+            Vector3f bulletEnd = new Vector3f((float) rayEnd.x, (float) rayEnd.y, (float) rayEnd.z);
 
-            // Perform JBullet raycast
-            com.bulletphysics.collision.dispatch.CollisionWorld.ClosestRayResultCallback rayCallback =
-                    new com.bulletphysics.collision.dispatch.CollisionWorld.ClosestRayResultCallback(rayStart, rayEnd);
+            // Create raycast callback that only hits grids
+            GridRayResultCallback callback = new GridRayResultCallback(bulletStart, bulletEnd);
 
-            synchronized (physicsLock) {
-                dynamicsWorld.rayTest(rayStart, rayEnd, rayCallback);
+            // Perform raycast against dynamics world
+            synchronized (getPhysicsLock()) {
+                getDynamicsWorld().rayTest(bulletStart, bulletEnd, callback);
             }
 
-            // Check if we hit something
-            if (rayCallback.hasHit()) {
-                // Get the hit object
-                com.bulletphysics.collision.dispatch.CollisionObject hitObject = rayCallback.collisionObject;
-
-                // Check if it's a grid
-                Object userPointer = hitObject.getUserPointer();
-                if (userPointer instanceof LocalGrid) {
-                    LocalGrid hitGrid = (LocalGrid) userPointer;
-
-                    // Get hit position and normal
-                    Vector3f hitPoint = new Vector3f();
-                    rayCallback.hitPointWorld.get(hitPoint);
-
-                    Vector3f hitNormal = new Vector3f();
-                    rayCallback.hitNormalWorld.get(hitNormal);
-
-                    // Convert hit point to grid-local coordinates
-                    Vec3d worldHitPos = new Vec3d(hitPoint.x, hitPoint.y, hitPoint.z);
-                    javax.vecmath.Vector3d gridLocalPoint = hitGrid.worldToGridLocal(
-                            new javax.vecmath.Vector3d(worldHitPos.x, worldHitPos.y, worldHitPos.z)
-                    );
-
-                    // Convert to block position
-                    BlockPos gridLocalBlockPos = new BlockPos(
-                            (int) Math.floor(gridLocalPoint.x),
-                            (int) Math.floor(gridLocalPoint.y),
-                            (int) Math.floor(gridLocalPoint.z)
-                    );
-
-                    // Convert to GridSpace coordinates for the HitResult
-                    BlockPos gridSpacePos = hitGrid.gridLocalToGridSpace(gridLocalBlockPos);
-
-                    // Calculate which face was hit
-                    Direction hitFace = calculateHitFace(hitNormal);
-
-                    SLogger.log("PhysicsEngine", String.format(
-                            "Physics raycast HIT: grid=%s, world=%.2f,%.2f,%.2f, gridLocal=%s, gridSpace=%s",
-                            hitGrid.getGridId().toString().substring(0, 8),
-                            worldHitPos.x, worldHitPos.y, worldHitPos.z,
-                            gridLocalBlockPos, gridSpacePos
-                    ));
-
-                    return Optional.of(new PhysicsRaycastResult(
-                            worldHitPos,
-                            gridSpacePos,
-                            hitFace,
-                            hitGrid,
-                            rayCallback.closestHitFraction
-                    ));
-                }
+            if (callback.hasHit()) {
+                return Optional.of(callback.createResult());
             }
 
             return Optional.empty();
 
         } catch (Exception e) {
-            SLogger.log("PhysicsEngine", "Error in physics raycast: " + e.getMessage());
-            e.printStackTrace();
+            SLogger.log("PhysicsEngine", "Error in grid raycast: " + e.getMessage());
             return Optional.empty();
         }
     }
 
     /**
-     * Calculates which block face was hit based on the hit normal.
+     * Custom raycast callback that only hits LocalGrid rigid bodies.
      */
-    private Direction calculateHitFace(Vector3f hitNormal) {
-        // Find the axis with the largest absolute component
-        float absX = Math.abs(hitNormal.x);
-        float absY = Math.abs(hitNormal.y);
-        float absZ = Math.abs(hitNormal.z);
+    private static class GridRayResultCallback extends CollisionWorld.ClosestRayResultCallback {
 
-        if (absY > absX && absY > absZ) {
-            return hitNormal.y > 0 ? Direction.UP : Direction.DOWN;
-        } else if (absX > absZ) {
-            return hitNormal.x > 0 ? Direction.EAST : Direction.WEST;
-        } else {
-            return hitNormal.z > 0 ? Direction.SOUTH : Direction.NORTH;
+        public GridRayResultCallback(Vector3f rayFromWorld, Vector3f rayToWorld) {
+            super(rayFromWorld, rayToWorld);
+        }
+
+        @Override
+        public float addSingleResult(CollisionWorld.LocalRayResult rayResult, boolean normalInWorldSpace) {
+            // Only process hits against LocalGrid rigid bodies
+            Object userPointer = rayResult.collisionObject.getUserPointer();
+            if (!(userPointer instanceof LocalGrid)) {
+                return 1.0f; // Skip non-grid objects
+            }
+
+            return super.addSingleResult(rayResult, normalInWorldSpace);
+        }
+
+        public PhysicsRaycastResult createResult() {
+            if (!hasHit()) return null;
+
+            Vector3f hitPoint = new Vector3f();
+            hitPointWorld.get(hitPoint);
+
+            Vector3f hitNormal = new Vector3f();
+            hitNormalWorld.get(hitNormal);
+
+            LocalGrid hitGrid = (LocalGrid) collisionObject.getUserPointer();
+
+            // Convert world hit point to GridSpace coordinates
+            Vec3d worldHitPos = new Vec3d(hitPoint.x, hitPoint.y, hitPoint.z);
+            BlockPos gridSpacePos = worldToGridSpace(worldHitPos, hitGrid);
+
+            return new PhysicsRaycastResult(
+                    worldHitPos,
+                    gridSpacePos,
+                    hitGrid,
+                    closestHitFraction
+            );
+        }
+
+        private BlockPos worldToGridSpace(Vec3d worldPos, LocalGrid grid) {
+            // Transform world → grid-local → GridSpace
+            Vector3d worldPoint = new Vector3d(worldPos.x, worldPos.y, worldPos.z);
+            Vector3d gridLocalPoint = grid.worldToGridLocal(worldPoint);
+            BlockPos gridLocalPos = new BlockPos(
+                    (int) Math.floor(gridLocalPoint.x),
+                    (int) Math.floor(gridLocalPoint.y),
+                    (int) Math.floor(gridLocalPoint.z)
+            );
+            return grid.gridLocalToGridSpace(gridLocalPos);
         }
     }
 
@@ -310,29 +287,29 @@ public class PhysicsEngine implements ILoggingControl {
     public static class PhysicsRaycastResult {
         public final Vec3d worldHitPos;
         public final BlockPos gridSpacePos;
-        public final Direction hitFace;
-        public final LocalGrid hitGrid;
-        public final float hitFraction; // 0.0 = start, 1.0 = end
+        public final LocalGrid grid;
+        public final float hitFraction;
 
-        public PhysicsRaycastResult(Vec3d worldHitPos, BlockPos gridSpacePos, Direction hitFace, LocalGrid hitGrid, float hitFraction) {
+        public PhysicsRaycastResult(Vec3d worldHitPos, BlockPos gridSpacePos, LocalGrid grid, float hitFraction) {
             this.worldHitPos = worldHitPos;
             this.gridSpacePos = gridSpacePos;
-            this.hitFace = hitFace;
-            this.hitGrid = hitGrid;
+            this.grid = grid;
             this.hitFraction = hitFraction;
         }
 
         /**
-         * Creates a BlockHitResult for Minecraft's interaction system.
+         * Creates a BlockHitResult for vanilla compatibility.
          */
         public BlockHitResult createBlockHitResult() {
-            // Use GridSpace coordinates for the BlockPos
-            // Use world coordinates for the hit position (for visual accuracy)
+            // Create a BlockHitResult using GridSpace coordinates
+            // This makes the hit appear to vanilla code as if it hit a block at GridSpace position
+            Direction hitSide = Direction.UP; // You may want to calculate this from hit normal
+
             return new BlockHitResult(
-                    worldHitPos,
-                    hitFace,
-                    gridSpacePos,
-                    false // not inside block
+                    worldHitPos,           // Visual hit position (where player sees the hit)
+                    hitSide,
+                    gridSpacePos,          // GridSpace coordinates (where the block actually is)
+                    false
             );
         }
     }

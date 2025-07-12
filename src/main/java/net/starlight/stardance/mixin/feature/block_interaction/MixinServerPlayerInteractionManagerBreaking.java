@@ -6,6 +6,8 @@ import net.minecraft.block.BlockState;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.network.ServerPlayerInteractionManager;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.starlight.stardance.core.LocalGrid;
@@ -17,6 +19,9 @@ import net.starlight.stardance.utils.SLogger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -34,6 +39,26 @@ import static net.starlight.stardance.Stardance.engineManager;
 @Mixin(ServerPlayerInteractionManager.class)
 public class MixinServerPlayerInteractionManagerBreaking implements ILoggingControl {
 
+    // NEW: Intercept the initial breaking attempt to see what coordinates server receives
+    @Inject(method = "tryBreakBlock", at = @At("HEAD"))
+    private void logBreakingAttempt(BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
+        SLogger.log("BlockBreaking", "=== SERVER BREAKING ATTEMPT ===");
+        SLogger.log("BlockBreaking", "Server received position: " + pos);
+        SLogger.log("BlockBreaking", "Is GridSpace: " + (pos.getX() >= 20_000_000 || pos.getZ() >= 20_000_000));
+
+        // Let's also test server-side raycast
+        ServerPlayerEntity player = this.player; // You have access to this
+        if (player != null) {
+            HitResult serverRaycast = player.raycast(10.0, 0.0f, false);
+            SLogger.log("BlockBreaking", "Server raycast result: " + serverRaycast.getType());
+            if (serverRaycast instanceof BlockHitResult) {
+                BlockPos serverPos = ((BlockHitResult) serverRaycast).getBlockPos();
+                SLogger.log("BlockBreaking", "Server raycast position: " + serverPos);
+                SLogger.log("BlockBreaking", "Server raycast is GridSpace: " + (serverPos.getX() >= 20_000_000));
+            }
+        }
+    }
+
     @Shadow
     public ServerPlayerEntity player;
 
@@ -50,6 +75,10 @@ public class MixinServerPlayerInteractionManagerBreaking implements ILoggingCont
         return true; // Enable for debugging block breaking
     }
 
+    static {
+        SLogger.log("BlockBreaking","BB initialized!!");
+    }
+
     /**
      * CORE MIXIN: Intercepts block state retrieval during breaking.
      * This is called when the server checks what block is being broken.
@@ -60,35 +89,36 @@ public class MixinServerPlayerInteractionManagerBreaking implements ILoggingCont
                  target = "Lnet/minecraft/server/world/ServerWorld;getBlockState(Lnet/minecraft/util/math/BlockPos;)Lnet/minecraft/block/BlockState;")
     )
     private BlockState interceptBlockStateQuery(ServerWorld world, BlockPos pos, Operation<BlockState> original) {
+        SLogger.log("BlockBreaking", "=== BLOCK BREAKING ATTEMPT ===");
+        SLogger.log("BlockBreaking", "Position: " + pos);
+        SLogger.log("BlockBreaking", "Is GridSpace coordinate: " + isGridSpaceCoordinate(pos));
+
         try {
             // Check if this position is in GridSpace
             Optional<LocalGrid> gridOpt = findGridForGridSpacePosition(pos, world);
-            
+
             if (gridOpt.isPresent()) {
                 LocalGrid grid = gridOpt.get();
-                
-                // Convert GridSpace → grid-local coordinates
                 BlockPos gridLocalPos = grid.gridSpaceToGridLocal(pos);
-                
-                // Get block state from grid's local storage
                 BlockState blockState = grid.getBlock(gridLocalPos);
-                
-                SLogger.log(this, String.format(
-                    "Block breaking query: GridSpace %s → grid-local %s = %s", 
-                    pos, gridLocalPos, 
-                    blockState != null ? blockState.getBlock().getName().getString() : "AIR"
-                ));
-                
+
+                SLogger.log("BlockBreaking", "✓ Found grid block: " + gridLocalPos + " = " +
+                        (blockState != null ? blockState.getBlock().getName().getString() : "null"));
+
                 return blockState != null ? blockState : net.minecraft.block.Blocks.AIR.getDefaultState();
+            } else {
+                SLogger.log("BlockBreaking", "Not a grid block, using vanilla");
             }
-            
+
         } catch (Exception e) {
-            SLogger.log(this, "Error during block state query: " + e.getMessage());
-            e.printStackTrace();
+            SLogger.log("BlockBreaking", "Error: " + e.getMessage());
         }
-        
-        // Fallback to vanilla behavior for world blocks
+
         return original.call(world, pos);
+    }
+
+    private boolean isGridSpaceCoordinate(BlockPos pos) {
+        return pos.getX() >= 20_000_000 || pos.getZ() >= 20_000_000;
     }
 
     /**
@@ -176,4 +206,5 @@ public class MixinServerPlayerInteractionManagerBreaking implements ILoggingCont
             return Optional.empty();
         }
     }
+
 }
