@@ -7,13 +7,7 @@
     "accessors.EntityAccessor",
     "physics.MixinEntity",
     "feature.block_interaction.MixinEntityRaycast",
-    "feature.block_interaction.MixinServerPlayerInteractionManagerBreaking",
-    "feature.block_interaction.MixinClientPlayerInteractionManagerDebug",
-    "feature.block_interaction.MixinClientPlayerInteractionManagerReach",
-    "feature.block_interaction.MixinMinecraftClientAttack",
-    "feature.block_interaction.MixinMinecraftClientDoAttackPost",
-    "feature.block_interaction.MixinClientPlayerInteractionManagerPackets",
-    "feature.block_interaction.MixinMinecraftClientInput"
+    "feature.block_interaction.MixinProjectileUtilSafety"
   ],
   "client": [
     "feature.block_interaction.MixinEntityRaycast"
