@@ -14,7 +14,7 @@ import java.util.Set;
  */
 public class StardanceMixinPlugin implements IMixinConfigPlugin {
 
-    private static final String MIXIN_PACKAGE = "net.starlight.stardance.mixin";
+    private static final String MIXIN_PACKAGE = "net.net.starlight.stardance.mixin";
     
     @Override
     public void onLoad(String mixinPackage) {

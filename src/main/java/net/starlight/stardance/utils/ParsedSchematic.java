@@ -1,10 +1,9 @@
 package net.starlight.stardance.utils;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-
 import java.util.HashMap;
 import java.util.Map;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 public class ParsedSchematic {
     public int width;
     public int height;
@@ -22,13 +21,13 @@ public class ParsedSchematic {
 
         if (!palette.containsKey(paletteIndex)) {
             System.err.println("Warning: Palette does not contain paletteIndex " + paletteIndex);
-            return Blocks.AIR.getDefaultState();
+            return Blocks.AIR.defaultBlockState();
         }
 
         BlockState state = palette.get(paletteIndex);
         if (state == null) {
             System.err.println("Warning: BlockState is null for paletteIndex: " + paletteIndex);
-            return Blocks.AIR.getDefaultState();
+            return Blocks.AIR.defaultBlockState();
         }
 
         return state;

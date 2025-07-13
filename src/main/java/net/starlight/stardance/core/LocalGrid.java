@@ -2,12 +2,12 @@ package net.starlight.stardance.core;
 
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.block.BlockState;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
 import net.starlight.stardance.gridspace.GridSpaceManager;
 import net.starlight.stardance.gridspace.GridSpaceRegion;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.gridspace.GridSpaceBlockManager;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -42,7 +42,7 @@ public class LocalGrid implements ILoggingControl {
     // ----------------------------------------------
     // CORE PROPERTIES
     // ----------------------------------------------
-    private final ServerWorld world;
+    private final ServerLevel world;
     private final UUID gridId;
     private final PhysicsEngine engine;
 
@@ -107,7 +107,7 @@ public class LocalGrid implements ILoggingControl {
      * @param firstBlockState BlockState to use for the initial block
      * @throws IllegalStateException if GridSpace allocation fails
      */
-    public LocalGrid(Vector3d origin, Quat4f rotation, ServerWorld world, BlockState firstBlockState) {
+    public LocalGrid(Vector3d origin, Quat4f rotation, ServerLevel world, BlockState firstBlockState) {
         this.origin = origin;
         this.rotation = rotation;
         this.world = world;
@@ -118,11 +118,11 @@ public class LocalGrid implements ILoggingControl {
         this.gridSpaceManager = engineManager.getGridSpaceManager(world);
 
         if (engine == null) {
-            throw new IllegalStateException("No PhysicsEngine found for world: " + world.getRegistryKey().getValue());
+            throw new IllegalStateException("No PhysicsEngine found for world: " + world.dimension().location());
         }
 
         if (gridSpaceManager == null) {
-            throw new IllegalStateException("No GridSpaceManager found for world: " + world.getRegistryKey().getValue());
+            throw new IllegalStateException("No GridSpaceManager found for world: " + world.dimension().location());
         }
 
         // Allocate GridSpace region
@@ -175,7 +175,7 @@ public class LocalGrid implements ILoggingControl {
         }
 
         // Apply center offset: grid-local (0,0,0) = center of GridSpace region
-        BlockPos offsetPos = gridLocalPos.add(GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET);
+        BlockPos offsetPos = gridLocalPos.offset(GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET);
         return gridSpaceRegion.gridLocalToGridSpace(offsetPos);
     }
 
@@ -192,7 +192,7 @@ public class LocalGrid implements ILoggingControl {
 
         BlockPos regionLocalPos = gridSpaceRegion.gridSpaceToGridLocal(gridSpacePos);
         // Remove center offset to get back to grid-local coordinates
-        return regionLocalPos.add(-GRIDSPACE_CENTER_OFFSET, -GRIDSPACE_CENTER_OFFSET, -GRIDSPACE_CENTER_OFFSET);
+        return regionLocalPos.offset(-GRIDSPACE_CENTER_OFFSET, -GRIDSPACE_CENTER_OFFSET, -GRIDSPACE_CENTER_OFFSET);
     }
 
     /**
@@ -207,7 +207,7 @@ public class LocalGrid implements ILoggingControl {
         }
 
         // Apply center offset and check if it fits within the region
-        BlockPos offsetPos = gridLocalPos.add(GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET);
+        BlockPos offsetPos = gridLocalPos.offset(GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET, GRIDSPACE_CENTER_OFFSET);
         return gridSpaceRegion.containsGridLocalPosition(offsetPos);
     }
 
@@ -238,7 +238,7 @@ public class LocalGrid implements ILoggingControl {
     public void tickUpdate() {
         if (isDestroyed || physicsComponent.getRigidBody() == null) return;
 
-        long currentServerTick = world.getTime();
+        long currentServerTick = world.getGameTime();
 
         // DEBUG: Track tickUpdate calls
         TickDebugInfo debug = debugTracker.computeIfAbsent(gridId, k -> new TickDebugInfo());
@@ -529,14 +529,14 @@ public class LocalGrid implements ILoggingControl {
      * @param gridLocalPoint Point in grid-local coordinates
      * @return Point in world coordinates
      */
-    public Vec3d gridLocalToWorld(javax.vecmath.Vector3d gridLocalPoint) {
+    public Vec3 gridLocalToWorld(javax.vecmath.Vector3d gridLocalPoint) {
         return physicsComponent.gridLocalToWorld(gridLocalPoint);
     }
 
     /**
      * Convenience method for Vec3d input.
      */
-    public Vec3d gridLocalToWorld(Vec3d gridLocalPoint) {
+    public Vec3 gridLocalToWorld(Vec3 gridLocalPoint) {
         javax.vecmath.Vector3d point = new javax.vecmath.Vector3d(
                 gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z
         );
@@ -676,7 +676,7 @@ public class LocalGrid implements ILoggingControl {
     /**
      * Gets the server world this grid belongs to.
      */
-    public ServerWorld getWorld() {
+    public ServerLevel getWorld() {
         return world;
     }
 

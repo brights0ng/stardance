@@ -4,14 +4,14 @@ import com.bulletphysics.collision.shapes.BoxShape;
 import com.bulletphysics.collision.shapes.CollisionShape;
 import com.bulletphysics.dynamics.DynamicsWorld;
 import com.bulletphysics.dynamics.RigidBody;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.vehicle.BoatEntity;
-import net.minecraft.entity.vehicle.MinecartEntity;
-import net.minecraft.util.math.Box;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.vehicle.Boat;
+import net.minecraft.world.entity.vehicle.Minecart;
+import net.minecraft.world.phys.AABB;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
@@ -88,21 +88,21 @@ public class EntityProxyFactory implements ILoggingControl {
         // Create appropriate shape based on entity type
         CollisionShape shape;
 
-        if (entity instanceof PlayerEntity) {
+        if (entity instanceof Player) {
             // Players get a compound shape with special handling
-            shape = createPlayerShape((PlayerEntity) entity);
+            shape = createPlayerShape((Player) entity);
         } else if (entity instanceof LivingEntity) {
             // Living entities get a compound shape
             shape = createLivingEntityShape((LivingEntity) entity);
-        } else if (entity instanceof MinecartEntity) {
+        } else if (entity instanceof Minecart) {
             // Minecarts get a special shape
-            shape = createMinecartShape((MinecartEntity) entity);
-        } else if (entity instanceof BoatEntity) {
+            shape = createMinecartShape((Minecart) entity);
+        } else if (entity instanceof Boat) {
             // Boats get a special shape
-            shape = createBoatShape((BoatEntity) entity);
-        } else if (entity instanceof ArmorStandEntity) {
+            shape = createBoatShape((Boat) entity);
+        } else if (entity instanceof ArmorStand) {
             // Armor stands get a special shape
-            shape = createArmorStandShape((ArmorStandEntity) entity);
+            shape = createArmorStandShape((ArmorStand) entity);
         } else {
             // Default to a box shape based on bounding box
             shape = createBoxShapeFromBoundingBox(entity.getBoundingBox());
@@ -122,7 +122,7 @@ public class EntityProxyFactory implements ILoggingControl {
      */
     private boolean shouldCacheShapeForEntity(Entity entity) {
         // Don't cache shapes for entities whose size can change
-        if (entity instanceof PlayerEntity) {
+        if (entity instanceof Player) {
             return false;
         }
 
@@ -133,7 +133,7 @@ public class EntityProxyFactory implements ILoggingControl {
     /**
      * Creates a box shape from a Minecraft bounding box.
      */
-    private CollisionShape createBoxShapeFromBoundingBox(Box box) {
+    private CollisionShape createBoxShapeFromBoundingBox(AABB box) {
         // Calculate half extents
         float halfWidth = (float) ((box.maxX - box.minX) * 0.5f);
         float halfHeight = (float) ((box.maxY - box.minY) * 0.5f);
@@ -147,8 +147,8 @@ public class EntityProxyFactory implements ILoggingControl {
      * Creates a box shape for a player entity.
      * Uses a simple BoxShape instead of CompoundShape to ensure it works with convexSweepTest.
      */
-    private CollisionShape createPlayerShape(PlayerEntity player) {
-        Box box = player.getBoundingBox();
+    private CollisionShape createPlayerShape(Player player) {
+        AABB box = player.getBoundingBox();
         return createBoxShapeFromBoundingBox(box);
     }
 
@@ -157,34 +157,34 @@ public class EntityProxyFactory implements ILoggingControl {
      */
     private CollisionShape createLivingEntityShape(LivingEntity entity) {
         // For most living entities, a simple box shape works well
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         return createBoxShapeFromBoundingBox(box);
     }
 
     /**
      * Creates a shape for a minecart entity.
      */
-    private CollisionShape createMinecartShape(MinecartEntity entity) {
+    private CollisionShape createMinecartShape(Minecart entity) {
         // For minecarts, use a box shape
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         return createBoxShapeFromBoundingBox(box);
     }
 
     /**
      * Creates a shape for a boat entity.
      */
-    private CollisionShape createBoatShape(BoatEntity entity) {
+    private CollisionShape createBoatShape(Boat entity) {
         // For boats, use a box shape
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         return createBoxShapeFromBoundingBox(box);
     }
 
     /**
      * Creates a shape for an armor stand entity.
      */
-    private CollisionShape createArmorStandShape(ArmorStandEntity entity) {
+    private CollisionShape createArmorStandShape(ArmorStand entity) {
         // For armor stands, use a slim box shape
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         float halfWidth = (float) ((box.maxX - box.minX) * 0.3f);
         float halfHeight = (float) ((box.maxY - box.minY) * 0.5f);
         float halfDepth = (float) ((box.maxZ - box.minZ) * 0.3f);
@@ -245,7 +245,7 @@ public class EntityProxyFactory implements ILoggingControl {
 
         public EntityShapeKey(Entity entity) {
             this.entityType = entity.getType();
-            Box box = entity.getBoundingBox();
+            AABB box = entity.getBoundingBox();
             this.width = (float) (box.maxX - box.minX);
             this.height = (float) (box.maxY - box.minY);
         }

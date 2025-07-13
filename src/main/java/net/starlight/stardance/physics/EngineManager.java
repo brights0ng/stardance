@@ -1,11 +1,11 @@
 package net.starlight.stardance.physics;
 
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.gridspace.GridSpaceManager;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -32,13 +32,13 @@ public class EngineManager implements ILoggingControl {
      * Maps ServerWorlds to their respective PhysicsEngines.
      * Uses ConcurrentHashMap for thread safety.
      */
-    private final ConcurrentHashMap<ServerWorld, PhysicsEngine> engines = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ServerLevel, PhysicsEngine> engines = new ConcurrentHashMap<>();
 
     /**
      * Maps ServerWorlds to their respective GridSpaceManagers.
      * Each dimension gets its own GridSpace manager to prevent interference.
      */
-    private final ConcurrentHashMap<ServerWorld, GridSpaceManager> gridSpaceManagers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ServerLevel, GridSpaceManager> gridSpaceManagers = new ConcurrentHashMap<>();
 
     public static final short COLLISION_GROUP_ENTITY = 4;
     public static final short COLLISION_GROUP_GRID = 1;
@@ -71,19 +71,19 @@ public class EngineManager implements ILoggingControl {
      *
      * @param world The server world to load engines for
      */
-    public void load(ServerWorld world) {
+    public void load(ServerLevel world) {
         // Load PhysicsEngine
         if (!engines.containsKey(world)) {
             PhysicsEngine engine = new PhysicsEngine(world);
             engines.put(world, engine);
-            SLogger.log(this, "Created PhysicsEngine for dimension: " + world.getRegistryKey().getValue());
+            SLogger.log(this, "Created PhysicsEngine for dimension: " + world.dimension().location());
         }
 
         // Load GridSpaceManager
         if (!gridSpaceManagers.containsKey(world)) {
             GridSpaceManager gridSpaceManager = new GridSpaceManager(world);
             gridSpaceManagers.put(world, gridSpaceManager);
-            SLogger.log(this, "Created GridSpaceManager for dimension: " + world.getRegistryKey().getValue());
+            SLogger.log(this, "Created GridSpaceManager for dimension: " + world.dimension().location());
         }
     }
 
@@ -93,7 +93,7 @@ public class EngineManager implements ILoggingControl {
      * @param world The server world
      * @return The PhysicsEngine for the world, or null if not loaded
      */
-    public PhysicsEngine getEngine(ServerWorld world) {
+    public PhysicsEngine getEngine(ServerLevel world) {
         return engines.get(world);
     }
 
@@ -104,12 +104,12 @@ public class EngineManager implements ILoggingControl {
      * @param world A World instance
      * @return The PhysicsEngine for the world, or null if not found
      */
-    public PhysicsEngine getEngine(World world) {
+    public PhysicsEngine getEngine(Level world) {
         if (serverInstance == null) {
             return null;
         }
 
-        ServerWorld serverWorld = serverInstance.getWorld(world.getRegistryKey());
+        ServerLevel serverWorld = serverInstance.getLevel(world.dimension());
         return serverWorld != null ? engines.get(serverWorld) : null;
     }
 
@@ -119,7 +119,7 @@ public class EngineManager implements ILoggingControl {
      * @param world The server world
      * @return The GridSpaceManager for the world, or null if not loaded
      */
-    public GridSpaceManager getGridSpaceManager(ServerWorld world) {
+    public GridSpaceManager getGridSpaceManager(ServerLevel world) {
         return gridSpaceManagers.get(world);
     }
 
@@ -130,12 +130,12 @@ public class EngineManager implements ILoggingControl {
      * @param world A World instance
      * @return The GridSpaceManager for the world, or null if not found
      */
-    public GridSpaceManager getGridSpaceManager(World world) {
+    public GridSpaceManager getGridSpaceManager(Level world) {
         if (serverInstance == null) {
             return null;
         }
 
-        ServerWorld serverWorld = serverInstance.getWorld(world.getRegistryKey());
+        ServerLevel serverWorld = serverInstance.getLevel(world.dimension());
         return serverWorld != null ? gridSpaceManagers.get(serverWorld) : null;
     }
 
@@ -146,7 +146,7 @@ public class EngineManager implements ILoggingControl {
      * @param server The Minecraft server instance
      */
     public void tick(MinecraftServer server) {
-        for (ServerWorld world : server.getWorlds()) {
+        for (ServerLevel world : server.getAllLevels()) {
             PhysicsEngine engine = engines.get(world);
             if (engine != null) {
                 engine.tick(world);
@@ -161,18 +161,18 @@ public class EngineManager implements ILoggingControl {
      *
      * @param world The server world being unloaded
      */
-    public void unload(ServerWorld world) {
+    public void unload(ServerLevel world) {
         // Shutdown and remove PhysicsEngine
         PhysicsEngine engine = engines.remove(world);
         if (engine != null) {
-            SLogger.log(this, "Shutting down PhysicsEngine for dimension: " + world.getRegistryKey().getValue());
+            SLogger.log(this, "Shutting down PhysicsEngine for dimension: " + world.dimension().location());
             // Add any necessary PhysicsEngine cleanup here
         }
 
         // Shutdown and remove GridSpaceManager
         GridSpaceManager gridSpaceManager = gridSpaceManagers.remove(world);
         if (gridSpaceManager != null) {
-            SLogger.log(this, "Shutting down GridSpaceManager for dimension: " + world.getRegistryKey().getValue());
+            SLogger.log(this, "Shutting down GridSpaceManager for dimension: " + world.dimension().location());
             gridSpaceManager.shutdown();
         }
     }
@@ -201,9 +201,9 @@ public class EngineManager implements ILoggingControl {
     /**
      * Utility method to find which grid a player is looking at.
      */
-    public LocalGrid getGridPlayerIsLookingAt(PlayerEntity player) {
+    public LocalGrid getGridPlayerIsLookingAt(Player player) {
         // Reuse the detection logic
-        PhysicsEngine engine = getEngine(player.getWorld());
+        PhysicsEngine engine = getEngine(player.level());
         if (engine == null) {
             return null;
         }
@@ -211,9 +211,9 @@ public class EngineManager implements ILoggingControl {
         Set<LocalGrid> grids = engine.getGrids();
         float playerReachDistance = 4.5f;
 
-        Vec3d eyePos = player.getEyePos();
-        Vec3d lookVec = player.getRotationVec(1.0F);
-        Vec3d reachPoint = eyePos.add(lookVec.multiply(playerReachDistance));
+        Vec3 eyePos = player.getEyePosition();
+        Vec3 lookVec = player.getViewVector(1.0F);
+        Vec3 reachPoint = eyePos.add(lookVec.scale(playerReachDistance));
 
         for (LocalGrid grid : grids) {
             if (gridIntersectsRay(grid, eyePos, reachPoint)) {
@@ -223,12 +223,12 @@ public class EngineManager implements ILoggingControl {
         return null;
     }
 
-    private boolean gridIntersectsRay(LocalGrid grid, Vec3d start, Vec3d end) {
+    private boolean gridIntersectsRay(LocalGrid grid, Vec3 start, Vec3 end) {
         javax.vecmath.Vector3f minAabb = new javax.vecmath.Vector3f();
         javax.vecmath.Vector3f maxAabb = new javax.vecmath.Vector3f();
         grid.getAABB(minAabb, maxAabb);
 
-        Box gridBox = new Box(minAabb.x, minAabb.y, minAabb.z,
+        AABB gridBox = new AABB(minAabb.x, minAabb.y, minAabb.z,
                 maxAabb.x, maxAabb.y, maxAabb.z);
 
         return gridBox.intersects(start, end);
@@ -237,7 +237,7 @@ public class EngineManager implements ILoggingControl {
     /**
      * Utility method for block breaking from static contexts.
      */
-    public boolean breakGridBlock(PlayerEntity player) {
+    public boolean breakGridBlock(Player player) {
         // You can create a static instance or delegate to the handler
         // For now, let's keep it simple and delegate to the existing handler
         return false; // Implement if needed

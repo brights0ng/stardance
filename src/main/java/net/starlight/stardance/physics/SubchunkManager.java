@@ -1,7 +1,7 @@
 package net.starlight.stardance.physics;
 
 import com.bulletphysics.dynamics.DynamicsWorld;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.server.level.ServerLevel;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;  // Assuming you have this logging utility
 
@@ -14,9 +14,9 @@ public class SubchunkManager implements ILoggingControl {
     private Map<SubchunkCoordinates, SubchunkMesh> subchunkMeshes = new ConcurrentHashMap<>();
     private Map<SubchunkCoordinates, Integer> referenceCounts = new ConcurrentHashMap<>();
     private DynamicsWorld dynamicsWorld;
-    private ServerWorld world;
+    private ServerLevel world;
 
-    public SubchunkManager(DynamicsWorld dynamicsWorld, ServerWorld world) {
+    public SubchunkManager(DynamicsWorld dynamicsWorld, ServerLevel world) {
         this.dynamicsWorld = dynamicsWorld;
         this.world = world;
         SLogger.log(this, "SubchunkManager created for world: " + world);

@@ -5,9 +5,11 @@ import com.bulletphysics.collision.shapes.*;
 import com.bulletphysics.dynamics.DynamicsWorld;
 import com.bulletphysics.linearmath.Transform;
 import com.bulletphysics.util.ObjectArrayList;
-import net.minecraft.client.render.*;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.Vec3d;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -47,10 +49,10 @@ public class CollisionShapeRenderer implements ILoggingControl {
     public static boolean ENABLED = false;
 
     /** The player's (or camera) eye position in world space, used to draw a debug line. */
-    public static Vec3d eyePos = new Vec3d(0, 0, 0);
+    public static Vec3 eyePos = new Vec3(0, 0, 0);
 
     /** The direction or end offset for the debug line (relative to eyePos). */
-    public static Vec3d lookVec = new Vec3d(0, 0, 0);
+    public static Vec3 lookVec = new Vec3(0, 0, 0);
 
     /** If set, a debug line is drawn from eyePos along lookVec. */
     public static LocalGrid interactedGrid = null;
@@ -70,8 +72,8 @@ public class CollisionShapeRenderer implements ILoggingControl {
      * @param engine          reference to the {@link PhysicsEngine}, used for locking
      */
     public void render(DynamicsWorld dynamicsWorld,
-                       MatrixStack matrices,
-                       VertexConsumerProvider vertexConsumers,
+                       PoseStack matrices,
+                       MultiBufferSource vertexConsumers,
                        float tickDelta,
                        PhysicsEngine engine) {
 
@@ -92,15 +94,15 @@ public class CollisionShapeRenderer implements ILoggingControl {
 
         // If there's an interactedGrid, draw a debug line from eyePos -> eyePos + lookVec
         if (interactedGrid != null) {
-            matrices.push();
+            matrices.pushPose();
             drawDebugLine(
-                    vertexConsumers.getBuffer(RenderLayer.LINES),
-                    matrices.peek().getPositionMatrix(),
+                    vertexConsumers.getBuffer(RenderType.LINES),
+                    matrices.last().pose(),
                     new Vector3f((float) eyePos.x, (float) eyePos.y, (float) eyePos.z),
                     new Vector3f((float) lookVec.x, (float) lookVec.y, (float) lookVec.z)
             );
             SLogger.log(this, "DRAWN: " + eyePos + ", " + lookVec);
-            matrices.pop();
+            matrices.popPose();
         }
     }
 
@@ -113,23 +115,23 @@ public class CollisionShapeRenderer implements ILoggingControl {
      * and drawing its CollisionShape.
      */
     private void renderCollisionObject(CollisionObject collisionObject,
-                                       MatrixStack matrices,
-                                       VertexConsumerProvider vertexConsumers) {
+                                       PoseStack matrices,
+                                       MultiBufferSource vertexConsumers) {
 
         CollisionShape shape = collisionObject.getCollisionShape();
         Transform transform = new Transform();
         collisionObject.getWorldTransform(transform);
 
-        matrices.push(); // Save matrix state
+        matrices.pushPose(); // Save matrix state
 
         // Apply Bullet transform (translation + rotation)
         applyBulletTransform(transform, matrices);
 
         // Render the shape (relative to the newly applied transform)
-        VertexConsumer vertexConsumer = vertexConsumers.getBuffer(RenderLayer.getLines());
+        VertexConsumer vertexConsumer = vertexConsumers.getBuffer(RenderType.lines());
         renderCollisionShape(shape, new Transform(), matrices, vertexConsumer);
 
-        matrices.pop(); // Restore matrix state
+        matrices.popPose(); // Restore matrix state
     }
 
     /**
@@ -140,7 +142,7 @@ public class CollisionShapeRenderer implements ILoggingControl {
      */
     private void renderCollisionShape(CollisionShape shape,
                                       Transform transform,
-                                      MatrixStack matrices,
+                                      PoseStack matrices,
                                       VertexConsumer vertexConsumer) {
 
         if (shape instanceof CompoundShape) {
@@ -161,7 +163,7 @@ public class CollisionShapeRenderer implements ILoggingControl {
      */
     private void renderCompoundShape(CompoundShape compoundShape,
                                      Transform parentTransform,
-                                     MatrixStack matrices,
+                                     PoseStack matrices,
                                      VertexConsumer vertexConsumer) {
 
         int numChildShapes = compoundShape.getNumChildShapes();
@@ -175,7 +177,7 @@ public class CollisionShapeRenderer implements ILoggingControl {
             Transform combinedTransform = new Transform();
             combinedTransform.mul(parentTransform, childTransform);
 
-            matrices.push();
+            matrices.pushPose();
 
             // Apply the child transform on top of the current matrix
             applyBulletTransform(childTransform, matrices);
@@ -183,7 +185,7 @@ public class CollisionShapeRenderer implements ILoggingControl {
             // Render the child shape
             renderCollisionShape(childShape, new Transform(), matrices, vertexConsumer);
 
-            matrices.pop();
+            matrices.popPose();
         }
     }
 
@@ -192,7 +194,7 @@ public class CollisionShapeRenderer implements ILoggingControl {
      */
     private static void renderBoxShape(BoxShape boxShape,
                                        Transform transform,
-                                       MatrixStack matrices,
+                                       PoseStack matrices,
                                        VertexConsumer vertexConsumer) {
 
         // Extract half extents
@@ -225,8 +227,8 @@ public class CollisionShapeRenderer implements ILoggingControl {
         };
 
         // Grab the matrix for rendering lines
-        MatrixStack.Entry entry = matrices.peek();
-        Matrix4f modelMatrix = entry.getPositionMatrix();
+        PoseStack.Pose entry = matrices.last();
+        Matrix4f modelMatrix = entry.pose();
 
         // Box color
         int red = 0, green = 100, blue = 255, alpha = 255;
@@ -244,11 +246,11 @@ public class CollisionShapeRenderer implements ILoggingControl {
      */
     private void renderBvhTriangleMeshShape(BvhTriangleMeshShape meshShape,
                                             Transform transform,
-                                            MatrixStack matrices,
+                                            PoseStack matrices,
                                             VertexConsumer vertexConsumer) {
 
-        MatrixStack.Entry entry = matrices.peek();
-        Matrix4f modelMatrix = entry.getPositionMatrix();
+        PoseStack.Pose entry = matrices.last();
+        Matrix4f modelMatrix = entry.pose();
 
         // Process all triangles. If needed, you could limit the AABB
         // for efficiency, but here it's set to the entire shape.
@@ -301,19 +303,19 @@ public class CollisionShapeRenderer implements ILoggingControl {
         vertexConsumer.vertex(matrix, start.x, start.y, start.z)
                 .color(red, green, blue, alpha)
                 .normal(0, 1, 0)
-                .next();
+                .endVertex();
 
         // Second vertex
         vertexConsumer.vertex(matrix, end.x, end.y, end.z)
                 .color(red, green, blue, alpha)
                 .normal(0, 1, 0)
-                .next();
+                .endVertex();
     }
 
     /**
      * Public helper to draw a simple debug line in the same style as collision outlines.
      *
-     * @param vertexConsumer line buffer (e.g., from {@link RenderLayer#getLines()})
+     * @param vertexConsumer line buffer (e.g., from {@link RenderType#lines()})
      * @param matrix         current transformation matrix (from {@code matrices.peek().getPositionMatrix()})
      * @param start          starting point
      * @param end            ending point
@@ -328,9 +330,9 @@ public class CollisionShapeRenderer implements ILoggingControl {
     }
 
     /**
-     * Applies a Bullet {@link Transform} (translation + rotation) to a Fabric/MC {@link MatrixStack}.
+     * Applies a Bullet {@link Transform} (translation + rotation) to a Fabric/MC {@link PoseStack}.
      */
-    private static void applyBulletTransform(Transform transform, MatrixStack matrices) {
+    private static void applyBulletTransform(Transform transform, PoseStack matrices) {
         // Translate by transform.origin
         Vector3f origin = transform.origin;
         matrices.translate(origin.x, origin.y, origin.z);
@@ -341,6 +343,6 @@ public class CollisionShapeRenderer implements ILoggingControl {
         Quaternionf rotation = new Quaternionf(bulletRot.x, bulletRot.y, bulletRot.z, bulletRot.w);
 
         // Multiply the matrix stack by the rotation
-        matrices.multiply(rotation);
+        matrices.mulPose(rotation);
     }
 }

@@ -4,11 +4,11 @@ import com.bulletphysics.collision.shapes.CollisionShape;
 import com.bulletphysics.collision.shapes.ConvexShape;
 import com.bulletphysics.dynamics.RigidBody;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.physics.entity.ContactDetector;
@@ -45,14 +45,14 @@ public class CollisionDebugger {
      * @return 1 if successful, 0 if failed
      */
     public static int debugCollision(FabricClientCommandSource source) {
-        PlayerEntity player = source.getPlayer();
+        Player player = source.getPlayer();
 
         // Get player's eye position and look vector
-        Vec3d eyePos = player.getEyePos();
-        Vec3d lookVec = player.getRotationVector();
+        Vec3 eyePos = player.getEyePosition();
+        Vec3 lookVec = player.getLookAngle();
 
         // Create the full-length ray
-        Vec3d rayEnd = eyePos.add(lookVec.multiply(RAY_LENGTH));
+        Vec3 rayEnd = eyePos.add(lookVec.scale(RAY_LENGTH));
 
         // Draw the initial ray
         DebugRenderer.addRay(eyePos, lookVec, RAY_LENGTH, COLOR_RAY, LINE_WIDTH, LINE_DURATION_TICKS);
@@ -61,19 +61,19 @@ public class CollisionDebugger {
         drawHitbox(player.getBoundingBox(), COLOR_HITBOX, LINE_DURATION_TICKS);
 
         // Show a marker at the player's position
-        DebugRenderer.addCrosshair(new Vec3d(player.getX(), player.getY() + player.getHeight() / 2, player.getZ()),
+        DebugRenderer.addCrosshair(new Vec3(player.getX(), player.getY() + player.getBbHeight() / 2, player.getZ()),
                 COLOR_HITBOX, 0.2f, LINE_WIDTH, LINE_DURATION_TICKS);
 
         // Get physics engine
-        PhysicsEngine engine = Stardance.engineManager.getEngine(player.getWorld());
+        PhysicsEngine engine = Stardance.engineManager.getEngine(player.level());
         if (engine == null) {
-            source.sendFeedback(Text.literal("§cPhysics engine not available"));
+            source.sendFeedback(Component.literal("§cPhysics engine not available"));
             return 0;
         }
 
         // DIAGNOSTIC: Check active grids
         Set<LocalGrid> grids = engine.getGrids();
-        source.sendFeedback(Text.literal("§eActive grids: " + grids.size()));
+        source.sendFeedback(Component.literal("§eActive grids: " + grids.size()));
 
         // Visualize all grid AABBs
         for (LocalGrid grid : grids) {
@@ -81,7 +81,7 @@ public class CollisionDebugger {
             Vector3f maxAabb = new Vector3f();
             grid.getAABB(minAabb, maxAabb);
 
-            Box gridBox = new Box(
+            AABB gridBox = new AABB(
                     minAabb.x, minAabb.y, minAabb.z,
                     maxAabb.x, maxAabb.y, maxAabb.z
             );
@@ -89,28 +89,28 @@ public class CollisionDebugger {
             drawHitbox(gridBox, COLOR_GRID, LINE_DURATION_TICKS);
 
             // Show grid ID for debugging
-            source.sendFeedback(Text.literal("§eGrid: " + grid.getGridId() +
+            source.sendFeedback(Component.literal("§eGrid: " + grid.getGridId() +
                     " at (" + Math.round(minAabb.x) + "," + Math.round(minAabb.y) + "," + Math.round(minAabb.z) + ")"));
 
             // DIAGNOSTIC: Check grid rigid body
             RigidBody gridBody = grid.getRigidBody();
             if (gridBody == null) {
-                source.sendFeedback(Text.literal("§c- Grid has no rigid body!"));
+                source.sendFeedback(Component.literal("§c- Grid has no rigid body!"));
             } else {
-                source.sendFeedback(Text.literal("§a- Grid has rigid body"));
+                source.sendFeedback(Component.literal("§a- Grid has rigid body"));
 
                 // DIAGNOSTIC: Check if grid is in dynamics world
                 boolean isInWorld = engine.getDynamicsWorld().getCollisionObjectArray().contains(gridBody);
                 if (!isInWorld) {
-                    source.sendFeedback(Text.literal("§c- Grid rigid body is NOT in dynamics world!"));
+                    source.sendFeedback(Component.literal("§c- Grid rigid body is NOT in dynamics world!"));
                 } else {
-                    source.sendFeedback(Text.literal("§a- Grid rigid body is in dynamics world"));
+                    source.sendFeedback(Component.literal("§a- Grid rigid body is in dynamics world"));
                 }
             }
         }
 
         // CRITICAL FIX: Force track player BEFORE doing anything else
-        source.sendFeedback(Text.literal("§aForce tracking player..."));
+        source.sendFeedback(Component.literal("§aForce tracking player..."));
         engine.getEntityPhysicsManager().forceTrackEntity(player);
 
         // Wait one tick to ensure the proxy is created
@@ -125,39 +125,39 @@ public class CollisionDebugger {
         EntityProxy playerProxy = entityProxies.get(player);
 
         if (playerProxy == null) {
-            source.sendFeedback(Text.literal("§cPlayer does not have a physics proxy!"));
+            source.sendFeedback(Component.literal("§cPlayer does not have a physics proxy!"));
             return 0;
         }
 
-        source.sendFeedback(Text.literal("§aPlayer has a physics proxy"));
+        source.sendFeedback(Component.literal("§aPlayer has a physics proxy"));
 
         // DIAGNOSTIC: Check player collision object
         if (playerProxy.getCollisionObject() == null) {
-            source.sendFeedback(Text.literal("§cPlayer proxy has no collision object!"));
+            source.sendFeedback(Component.literal("§cPlayer proxy has no collision object!"));
             return 0;
         }
 
-        source.sendFeedback(Text.literal("§aPlayer proxy has a collision object"));
+        source.sendFeedback(Component.literal("§aPlayer proxy has a collision object"));
 
         // DIAGNOSTIC: Check player collision shape
         CollisionShape playerShape = playerProxy.getCollisionShape();
         if (playerShape == null) {
-            source.sendFeedback(Text.literal("§cPlayer proxy has no collision shape!"));
+            source.sendFeedback(Component.literal("§cPlayer proxy has no collision shape!"));
             return 0;
         }
 
-        source.sendFeedback(Text.literal("§aPlayer proxy has a collision shape: " + playerShape.getClass().getSimpleName()));
+        source.sendFeedback(Component.literal("§aPlayer proxy has a collision shape: " + playerShape.getClass().getSimpleName()));
 
         // DIAGNOSTIC: Check if shape is convex
         if (!(playerShape instanceof ConvexShape)) {
-            source.sendFeedback(Text.literal("§cPlayer shape is not a convex shape!"));
+            source.sendFeedback(Component.literal("§cPlayer shape is not a convex shape!"));
             return 0;
         }
 
-        source.sendFeedback(Text.literal("§aPlayer shape is convex"));
+        source.sendFeedback(Component.literal("§aPlayer shape is convex"));
 
         // Create a movement vector
-        Vec3d movement = lookVec.multiply(RAY_LENGTH);
+        Vec3 movement = lookVec.scale(RAY_LENGTH);
 
         // Perform the sweep test
         ContactDetector contactDetector = engine.getEntityPhysicsManager().getContactDetector();
@@ -165,17 +165,17 @@ public class CollisionDebugger {
 
         if (result == null) {
             // No collision detected
-            source.sendFeedback(Text.literal("§eNo collision detected"));
+            source.sendFeedback(Component.literal("§eNo collision detected"));
 
             // DIAGNOSTIC: Additional debugging for no collision
             if (grids.isEmpty()) {
-                source.sendFeedback(Text.literal("§c⚠ No grids to collide with!"));
+                source.sendFeedback(Component.literal("§c⚠ No grids to collide with!"));
             } else {
-                source.sendFeedback(Text.literal("§e⚠ Grids exist but no collision detected"));
+                source.sendFeedback(Component.literal("§e⚠ Grids exist but no collision detected"));
             }
 
             // DIAGNOSTIC: Try alternative collision check method
-            source.sendFeedback(Text.literal("§eTrying alternative collision detection..."));
+            source.sendFeedback(Component.literal("§eTrying alternative collision detection..."));
 
             for (LocalGrid grid : grids) {
                 RigidBody gridBody = grid.getRigidBody();
@@ -234,7 +234,7 @@ public class CollisionDebugger {
 
                 // If tNear <= tFar, we have an intersection
                 if (tNear <= tFar && tNear >= 0 && tNear <= RAY_LENGTH) {
-                    source.sendFeedback(Text.literal("§a✓ Alternative test found collision with grid: " + grid.getGridId()));
+                    source.sendFeedback(Component.literal("§a✓ Alternative test found collision with grid: " + grid.getGridId()));
 
                     // Draw the intersection point
                     Vector3f hitPoint = new Vector3f(rayStart);
@@ -242,12 +242,12 @@ public class CollisionDebugger {
                     scaledDir.scale(tNear);
                     hitPoint.add(scaledDir);
 
-                    Vec3d hitPointVec = new Vec3d(hitPoint.x, hitPoint.y, hitPoint.z);
+                    Vec3 hitPointVec = new Vec3(hitPoint.x, hitPoint.y, hitPoint.z);
                     DebugRenderer.addCrosshair(hitPointVec, COLOR_CONTACT, 0.2f, LINE_WIDTH * 2, LINE_DURATION_TICKS);
 
                     // DIAGNOSTIC: Check why convexSweepTest didn't detect this
-                    source.sendFeedback(Text.literal("§c⚠ convexSweepTest failed to detect this collision!"));
-                    source.sendFeedback(Text.literal("§e- Distance to hit: " + (tNear * RAY_LENGTH) + " blocks"));
+                    source.sendFeedback(Component.literal("§c⚠ convexSweepTest failed to detect this collision!"));
+                    source.sendFeedback(Component.literal("§e- Distance to hit: " + (tNear * RAY_LENGTH) + " blocks"));
                 }
             }
 
@@ -255,7 +255,7 @@ public class CollisionDebugger {
         }
 
         // Collision detected!
-        source.sendFeedback(Text.literal("§aCollision detected!"));
+        source.sendFeedback(Component.literal("§aCollision detected!"));
 
         // Get collision information
         float timeOfImpact = result.getTimeOfImpact();
@@ -265,42 +265,42 @@ public class CollisionDebugger {
         // Calculate safe movement (just before collision)
         double safetyMargin = 0.01;
         double safeTime = Math.max(0, timeOfImpact - safetyMargin);
-        Vec3d safeMovement = movement.multiply(safeTime);
+        Vec3 safeMovement = movement.scale(safeTime);
 
         // Calculate where the player would be after safe movement
-        Box safeBox = player.getBoundingBox().offset(safeMovement);
+        AABB safeBox = player.getBoundingBox().move(safeMovement);
 
         // Calculate remaining movement
         double remainingTime = 1.0 - safeTime;
-        Vec3d remainingMovement = movement.multiply(remainingTime);
+        Vec3 remainingMovement = movement.scale(remainingTime);
 
         // Visualize the safe movement
-        Vec3d safeEnd = eyePos.add(safeMovement);
+        Vec3 safeEnd = eyePos.add(safeMovement);
         DebugRenderer.addLine(eyePos, safeEnd, COLOR_AFTER, LINE_WIDTH, LINE_DURATION_TICKS);
 
         // Draw the player's hitbox after safe movement
         drawHitbox(safeBox, COLOR_AFTER, LINE_DURATION_TICKS);
 
         // Show the contact point
-        Vec3d contactPoint = new Vec3d(hitPoint.x, hitPoint.y, hitPoint.z);
+        Vec3 contactPoint = new Vec3(hitPoint.x, hitPoint.y, hitPoint.z);
         DebugRenderer.addCrosshair(contactPoint, COLOR_CONTACT, 0.2f, LINE_WIDTH * 2, LINE_DURATION_TICKS);
 
         // Create the normal vector for visualization
-        Vec3d normalVec = new Vec3d(hitNormal.x, hitNormal.y, hitNormal.z);
+        Vec3 normalVec = new Vec3(hitNormal.x, hitNormal.y, hitNormal.z);
         DebugRenderer.addRay(contactPoint, normalVec, 1.0, COLOR_CONTACT, LINE_WIDTH, LINE_DURATION_TICKS);
 
         // Calculate deflection
-        Vec3d deflection = calculateDeflection(movement, normalVec, timeOfImpact);
+        Vec3 deflection = calculateDeflection(movement, normalVec, timeOfImpact);
 
         // Visualize deflection
         DebugRenderer.addLine(safeEnd, safeEnd.add(deflection), COLOR_DEFLECTION, LINE_WIDTH, LINE_DURATION_TICKS);
 
         // Draw final hitbox after deflection
-        Box deflectedBox = safeBox.offset(deflection);
+        AABB deflectedBox = safeBox.move(deflection);
         drawHitbox(deflectedBox, COLOR_DEFLECTION, LINE_DURATION_TICKS);
 
         // Send feedback about the collision
-        source.sendFeedback(Text.literal(String.format(
+        source.sendFeedback(Component.literal(String.format(
                 "§aTime of impact: §f%.4f\n§aNormal: §f(%.2f, %.2f, %.2f)\n§aContact: §f(%.2f, %.2f, %.2f)",
                 timeOfImpact,
                 hitNormal.x, hitNormal.y, hitNormal.z,
@@ -308,9 +308,9 @@ public class CollisionDebugger {
 
         // DIAGNOSTIC: What did we hit?
         if (result.getGrid() != null) {
-            source.sendFeedback(Text.literal("§aHit grid: " + result.getGrid().getGridId()));
+            source.sendFeedback(Component.literal("§aHit grid: " + result.getGrid().getGridId()));
         } else if (result.getCollidedEntity() != null) {
-            source.sendFeedback(Text.literal("§aHit entity: " + result.getCollidedEntity().getEntityName()));
+            source.sendFeedback(Component.literal("§aHit entity: " + result.getCollidedEntity().getScoreboardName()));
         }
 
         return 1;
@@ -320,18 +320,18 @@ public class CollisionDebugger {
      * Calculates the deflected movement after a collision.
      * This replicates the logic in MixinEntity.adjustMovementForGridCollisions.
      */
-    private static Vec3d calculateDeflection(Vec3d fullMovement, Vec3d normal, float timeOfImpact) {
+    private static Vec3 calculateDeflection(Vec3 fullMovement, Vec3 normal, float timeOfImpact) {
         // Calculate remaining time
         double safetyMargin = 0.01;
         double safeTime = Math.max(0, timeOfImpact - safetyMargin);
         double remainingTime = 1.0 - safeTime;
 
         if (remainingTime < 0.01) {
-            return Vec3d.ZERO;
+            return Vec3.ZERO;
         }
 
         // Calculate remaining movement
-        Vec3d remainingMovement = fullMovement.multiply(remainingTime);
+        Vec3 remainingMovement = fullMovement.scale(remainingTime);
 
         // Convert to Vector3d for more precise math
         org.joml.Vector3d movementVec = new org.joml.Vector3d(
@@ -360,7 +360,7 @@ public class CollisionDebugger {
 
             // If tangential component is negligible, no deflection
             if (tangentialLength < 0.0001) {
-                return Vec3d.ZERO;
+                return Vec3.ZERO;
             } else {
                 // Normalize tangential component
                 tangentialComponent.mul(1.0 / tangentialLength);
@@ -374,7 +374,7 @@ public class CollisionDebugger {
                 tangentialComponent.mul(deflectionMagnitude);
 
                 // Convert back to Vec3d
-                return new Vec3d(
+                return new Vec3(
                         tangentialComponent.x,
                         tangentialComponent.y,
                         tangentialComponent.z
@@ -389,7 +389,7 @@ public class CollisionDebugger {
     /**
      * Draws a hitbox with debug lines.
      */
-    private static void drawHitbox(Box box, int color, int durationTicks) {
+    private static void drawHitbox(AABB box, int color, int durationTicks) {
         DebugRenderer.addBox(box, color, LINE_WIDTH, durationTicks);
     }
 }

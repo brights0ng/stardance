@@ -1,6 +1,6 @@
 package net.starlight.stardance.mixinducks;
 
-import net.minecraft.util.hit.HitResult;
+import net.minecraft.world.phys.HitResult;
 
 /**
  * Interface for storing original crosshair targets (VS2 pattern).

@@ -11,10 +11,10 @@ import com.bulletphysics.collision.shapes.ConvexShape;
 import com.bulletphysics.dynamics.DynamicsWorld;
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -64,7 +64,7 @@ public class ContactDetector implements ILoggingControl {
 
     // Inside ContactDetector.java
 
-    public SweepResult convexSweepTest(Entity entity, Vec3d movement, Map<Entity, EntityProxy> entityProxies) {
+    public SweepResult convexSweepTest(Entity entity, Vec3 movement, Map<Entity, EntityProxy> entityProxies) {
         // ... (skip movement check, get proxy, check shape, setup transforms - SAME AS BEFORE) ...
         EntityProxy entityProxy = entityPhysicsManager.getEntityProxy(entity);
         if (entityProxy == null || entityProxy.getCollisionObject() == null || entityProxy.getCollisionObject().getBroadphaseHandle() == null) {
@@ -140,23 +140,23 @@ public class ContactDetector implements ILoggingControl {
                 hitDetectionCount++;
 
                 // Optional: Log the raw geometric hit here before filtering
-                if (DEBUG_COLLISIONS && entity.isPlayer()) {
+                if (DEBUG_COLLISIONS && entity.isAlwaysTicking()) {
                     String targetType = "Unknown";
                     if(hitGrid != null) targetType = "Grid " + hitGrid.getGridId().toString().substring(0, 4);
-                    else if(hitEntity != null) targetType = "Entity " + hitEntity.getEntityName();
+                    else if(hitEntity != null) targetType = "Entity " + hitEntity.getScoreboardName();
                     else if (userPointer instanceof WorldBlockMarker) targetType = "WorldBlockMarker/Mesh";
                     else if (hitObject != null) targetType = "Object: " + hitObject.getCollisionShape().getName();
 
                     SLogger.log(this, String.format(
                             "[%s %d] Raw sweep test hit %s (Group: %d, Mask: %d) at fraction %.4f",
-                            entity.getType().getName().getString(), entity.getId(), targetType,
+                            entity.getType().getDescription().getString(), entity.getId(), targetType,
                             hitObject.getBroadphaseHandle().collisionFilterGroup,
                             hitObject.getBroadphaseHandle().collisionFilterMask,
                             callback.closestHitFraction));
                 }
-            } else if (DEBUG_COLLISIONS && entity.isPlayer()) {
+            } else if (DEBUG_COLLISIONS && entity.isAlwaysTicking()) {
                 SLogger.log(this, String.format("[%s %d] Raw sweep test found no geometric collisions.",
-                        entity.getType().getName().getString(), entity.getId()));
+                        entity.getType().getDescription().getString(), entity.getId()));
             }
 
         } // end synchronized block
@@ -235,7 +235,7 @@ public class ContactDetector implements ILoggingControl {
      */
     public List<Contact> detectContacts(Entity entity) {
         List<Contact> contacts = new ArrayList<>();
-        boolean isPlayer = entity instanceof PlayerEntity;
+        boolean isPlayer = entity instanceof Player;
 
         synchronized (physicsEngine.getPhysicsLock()) {
             // Get the entity's collision object
@@ -660,7 +660,7 @@ public class ContactDetector implements ILoggingControl {
         EntityProxy proxy = entityPhysicsManager.getEntityProxies().get(entity);
         if (proxy == null) {
             // Create a box shape based on entity bounds
-            Box box = entity.getBoundingBox();
+            AABB box = entity.getBoundingBox();
             float halfWidth = (float) ((box.maxX - box.minX) * 0.5f);
             float halfHeight = (float) ((box.maxY - box.minY) * 0.5f);
             float halfDepth = (float) ((box.maxZ - box.minZ) * 0.5f);
@@ -853,12 +853,12 @@ public class ContactDetector implements ILoggingControl {
          * @param safetyMargin Small margin to prevent intersection
          * @return Safe position vector
          */
-        public Vec3d getSafePosition(Vec3d startPos, Vec3d movement, double safetyMargin) {
+        public Vec3 getSafePosition(Vec3 startPos, Vec3 movement, double safetyMargin) {
             // Calculate adjusted time of impact with safety margin
             float adjustedTOI = Math.max(0.0f, timeOfImpact - (float) safetyMargin);
 
             // Calculate safe movement
-            return new Vec3d(
+            return new Vec3(
                     startPos.x + movement.x * adjustedTOI,
                     startPos.y + movement.y * adjustedTOI,
                     startPos.z + movement.z * adjustedTOI
@@ -867,7 +867,7 @@ public class ContactDetector implements ILoggingControl {
 
         @Override
         public String toString() {
-            String collisionTarget = grid != null ? "grid" : (collidedEntity != null ? collidedEntity.getEntityName() : "unknown");
+            String collisionTarget = grid != null ? "grid" : (collidedEntity != null ? collidedEntity.getScoreboardName() : "unknown");
             return String.format(
                     "SweepResult{time=%.4f, target=%s, normal=(%.2f, %.2f, %.2f)}",
                     timeOfImpact,

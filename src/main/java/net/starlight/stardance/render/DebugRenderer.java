@@ -1,17 +1,17 @@
 package net.starlight.stardance.render;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.Tesselator;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.GameRenderer;
-import net.minecraft.client.render.Tessellator;
-import net.minecraft.client.render.VertexFormat;
-import net.minecraft.client.render.VertexFormats;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 import org.joml.Matrix4f;
@@ -104,16 +104,16 @@ public class DebugRenderer implements ILoggingControl {
         }
 
         // Get camera position and look direction
-        MinecraftClient client = MinecraftClient.getInstance();
-        Vec3d cameraPos = client.gameRenderer.getCamera().getPos();
+        Minecraft client = Minecraft.getInstance();
+        Vec3 cameraPos = client.gameRenderer.getMainCamera().getPosition();
 
         // Get look vector from camera rotation
-        float pitch = client.gameRenderer.getCamera().getPitch();
-        float yaw = client.gameRenderer.getCamera().getYaw();
-        Vec3d lookDir = getLookVectorFromRotation(pitch, yaw);
+        float pitch = client.gameRenderer.getMainCamera().getXRot();
+        float yaw = client.gameRenderer.getMainCamera().getYRot();
+        Vec3 lookDir = getLookVectorFromRotation(pitch, yaw);
 
         // Get matrix from context
-        Matrix4f positionMatrix = context.matrixStack().peek().getPositionMatrix();
+        Matrix4f positionMatrix = context.matrixStack().last().pose();
 
         // Critical for drawing through blocks:
         // 1. Save the current depth function
@@ -128,13 +128,13 @@ public class DebugRenderer implements ILoggingControl {
         RenderSystem.disableCull();       // Disable face culling
         RenderSystem.enableBlend();       // Enable transparency
         RenderSystem.defaultBlendFunc();  // Use default blending
-        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
+        RenderSystem.setShader(GameRenderer::getPositionColorShader);
 
-        Tessellator tessellator = Tessellator.getInstance();
-        BufferBuilder buffer = tessellator.getBuffer();
+        Tesselator tessellator = Tesselator.getInstance();
+        BufferBuilder buffer = tessellator.getBuilder();
 
         // Render line elements
-        buffer.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
+        buffer.begin(VertexFormat.Mode.TRIANGLES, DefaultVertexFormat.POSITION_COLOR);
 
         for (DebugElement element : elements) {
             if (element instanceof Line) {
@@ -142,10 +142,10 @@ public class DebugRenderer implements ILoggingControl {
             }
         }
 
-        tessellator.draw();
+        tessellator.end();
 
         // Render point elements
-        buffer.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
+        buffer.begin(VertexFormat.Mode.TRIANGLES, DefaultVertexFormat.POSITION_COLOR);
 
         for (DebugElement element : elements) {
             if (element instanceof Point) {
@@ -153,10 +153,10 @@ public class DebugRenderer implements ILoggingControl {
             }
         }
 
-        tessellator.draw();
+        tessellator.end();
 
         // Render box elements - these use DEBUG_LINES mode since they're wireframes
-        buffer.begin(VertexFormat.DrawMode.DEBUG_LINES, VertexFormats.POSITION_COLOR);
+        buffer.begin(VertexFormat.Mode.DEBUG_LINES, DefaultVertexFormat.POSITION_COLOR);
 
         for (DebugElement element : elements) {
             if (element instanceof Box3D) {
@@ -164,7 +164,7 @@ public class DebugRenderer implements ILoggingControl {
             }
         }
 
-        tessellator.draw();
+        tessellator.end();
 
         // Reset render state to what it was before
         if (depthTestEnabled) {
@@ -187,7 +187,7 @@ public class DebugRenderer implements ILoggingControl {
     /**
      * Converts pitch and yaw angles to a look direction vector.
      */
-    private Vec3d getLookVectorFromRotation(float pitch, float yaw) {
+    private Vec3 getLookVectorFromRotation(float pitch, float yaw) {
         float pitchRad = pitch * 0.017453292F;  // Convert to radians
         float yawRad = -yaw * 0.017453292F;     // Convert to radians
 
@@ -196,7 +196,7 @@ public class DebugRenderer implements ILoggingControl {
         float cosPitch = (float) Math.cos(pitchRad);
         float sinPitch = (float) Math.sin(pitchRad);
 
-        return new Vec3d(
+        return new Vec3(
                 sinYaw * cosPitch,
                 -sinPitch,
                 cosYaw * cosPitch
@@ -214,7 +214,7 @@ public class DebugRenderer implements ILoggingControl {
      * @param width Line width
      * @param durationTicks How long to display the line (-1 for permanent)
      */
-    public static void addLine(Vec3d start, Vec3d end, int color, float width, int durationTicks) {
+    public static void addLine(Vec3 start, Vec3 end, int color, float width, int durationTicks) {
         INSTANCE.elements.add(new Line(start, end, color, width, durationTicks));
     }
 
@@ -226,7 +226,7 @@ public class DebugRenderer implements ILoggingControl {
      * @param size Point size
      * @param durationTicks How long to display the point (-1 for permanent)
      */
-    public static void addPoint(Vec3d position, int color, float size, int durationTicks) {
+    public static void addPoint(Vec3 position, int color, float size, int durationTicks) {
         INSTANCE.elements.add(new Point(position, color, size, durationTicks));
     }
 
@@ -238,7 +238,7 @@ public class DebugRenderer implements ILoggingControl {
      * @param width Line width
      * @param durationTicks How long to display the box (-1 for permanent)
      */
-    public static void addBox(Box box, int color, float width, int durationTicks) {
+    public static void addBox(AABB box, int color, float width, int durationTicks) {
         INSTANCE.elements.add(new Box3D(box, color, width, durationTicks));
     }
 
@@ -251,7 +251,7 @@ public class DebugRenderer implements ILoggingControl {
      * @param width Line width
      * @param durationTicks How long to display (-1 for permanent)
      */
-    public static void addCrosshair(Vec3d position, int color, float size, float width, int durationTicks) {
+    public static void addCrosshair(Vec3 position, int color, float size, float width, int durationTicks) {
         // X-axis line
         addLine(
                 position.add(-size, 0, 0),
@@ -284,9 +284,9 @@ public class DebugRenderer implements ILoggingControl {
      * @param width Line width
      * @param durationTicks How long to display (-1 for permanent)
      */
-    public static void addRay(Vec3d start, Vec3d direction, double length, int color, float width, int durationTicks) {
-        Vec3d normalizedDir = direction.normalize();
-        Vec3d end = start.add(normalizedDir.multiply(length));
+    public static void addRay(Vec3 start, Vec3 direction, double length, int color, float width, int durationTicks) {
+        Vec3 normalizedDir = direction.normalize();
+        Vec3 end = start.add(normalizedDir.scale(length));
 
         addLine(start, end, color, width, durationTicks);
     }
@@ -303,16 +303,16 @@ public class DebugRenderer implements ILoggingControl {
      * @param width Line width
      * @param durationTicks How long to display (-1 for permanent)
      */
-    public static void addTrajectory(Vec3d start, Vec3d velocity, int steps,
+    public static void addTrajectory(Vec3 start, Vec3 velocity, int steps,
                                      float timeStep, boolean gravity,
                                      int color, float width, int durationTicks) {
-        Vec3d pos = start;
-        Vec3d vel = velocity;
-        Vec3d gravityVec = gravity ? new Vec3d(0, -9.8, 0) : Vec3d.ZERO;
+        Vec3 pos = start;
+        Vec3 vel = velocity;
+        Vec3 gravityVec = gravity ? new Vec3(0, -9.8, 0) : Vec3.ZERO;
 
         for (int i = 0; i < steps - 1; i++) {
-            Vec3d nextPos = pos.add(vel.multiply(timeStep));
-            Vec3d nextVel = vel.add(gravityVec.multiply(timeStep));
+            Vec3 nextPos = pos.add(vel.scale(timeStep));
+            Vec3 nextVel = vel.add(gravityVec.scale(timeStep));
 
             addLine(pos, nextPos, color, width, durationTicks);
 
@@ -392,13 +392,13 @@ public class DebugRenderer implements ILoggingControl {
      * Represents a line in 3D space, rendered as a billboarded quad.
      */
     private static class Line extends DebugElement {
-        private final Vec3d start;
-        private final Vec3d end;
+        private final Vec3 start;
+        private final Vec3 end;
 
         /**
          * Creates a new line.
          */
-        public Line(Vec3d start, Vec3d end, int color, float width, int durationTicks) {
+        public Line(Vec3 start, Vec3 end, int color, float width, int durationTicks) {
             super(color, width, durationTicks);
             this.start = start;
             this.end = end;
@@ -407,7 +407,7 @@ public class DebugRenderer implements ILoggingControl {
         /**
          * Renders the line as a billboarded quad.
          */
-        public void render(BufferBuilder buffer, Matrix4f matrix, Vec3d camera, Vec3d cameraLook) {
+        public void render(BufferBuilder buffer, Matrix4f matrix, Vec3 camera, Vec3 cameraLook) {
             // If width is very small, skip rendering
             if (width < 0.01f) {
                 return;
@@ -416,34 +416,34 @@ public class DebugRenderer implements ILoggingControl {
             int[] rgba = getRGBA(color);
 
             // Line direction vector
-            Vec3d lineDir = end.subtract(start).normalize();
+            Vec3 lineDir = end.subtract(start).normalize();
 
             // Create a vector perpendicular to both the line and view direction
             // This will be our "up" vector for the billboard
-            Vec3d viewDir = camera.subtract(start.add(end).multiply(0.5)).normalize();
-            Vec3d right = viewDir.crossProduct(lineDir).normalize();
+            Vec3 viewDir = camera.subtract(start.add(end).scale(0.5)).normalize();
+            Vec3 right = viewDir.cross(lineDir).normalize();
 
             // If right is too small (line is parallel to view direction), use a fallback
-            if (right.lengthSquared() < 0.001) {
+            if (right.lengthSqr() < 0.001) {
                 // Use world up as fallback
-                right = new Vec3d(0, 1, 0).crossProduct(lineDir);
+                right = new Vec3(0, 1, 0).cross(lineDir);
 
                 // If still too small, use world forward
-                if (right.lengthSquared() < 0.001) {
-                    right = new Vec3d(0, 0, 1).crossProduct(lineDir);
+                if (right.lengthSqr() < 0.001) {
+                    right = new Vec3(0, 0, 1).cross(lineDir);
                 }
 
                 right = right.normalize();
             }
 
             // Scale by half width
-            Vec3d offset = right.multiply(width * 0.5);
+            Vec3 offset = right.scale(width * 0.5);
 
             // Four corners of the quad
-            Vec3d startTop = start.add(offset);
-            Vec3d startBottom = start.subtract(offset);
-            Vec3d endTop = end.add(offset);
-            Vec3d endBottom = end.subtract(offset);
+            Vec3 startTop = start.add(offset);
+            Vec3 startBottom = start.subtract(offset);
+            Vec3 endTop = end.add(offset);
+            Vec3 endBottom = end.subtract(offset);
 
             // Draw as two triangles
             addVertex(buffer, matrix, camera, startTop, rgba);
@@ -458,13 +458,13 @@ public class DebugRenderer implements ILoggingControl {
         /**
          * Helper to add a vertex to the buffer.
          */
-        private void addVertex(BufferBuilder buffer, Matrix4f matrix, Vec3d camera, Vec3d pos, int[] rgba) {
+        private void addVertex(BufferBuilder buffer, Matrix4f matrix, Vec3 camera, Vec3 pos, int[] rgba) {
             buffer.vertex(matrix,
                             (float)(pos.x - camera.x),
                             (float)(pos.y - camera.y),
                             (float)(pos.z - camera.z))
                     .color(rgba[0], rgba[1], rgba[2], rgba[3])
-                    .next();
+                    .endVertex();
         }
     }
 
@@ -472,13 +472,13 @@ public class DebugRenderer implements ILoggingControl {
      * Represents a point in 3D space, rendered as a billboarded quad.
      */
     private static class Point extends DebugElement {
-        private final Vec3d position;
+        private final Vec3 position;
         private final float size;
 
         /**
          * Creates a new point.
          */
-        public Point(Vec3d position, int color, float size, int durationTicks) {
+        public Point(Vec3 position, int color, float size, int durationTicks) {
             super(color, 1.0f, durationTicks);
             this.position = position;
             this.size = size;
@@ -487,31 +487,31 @@ public class DebugRenderer implements ILoggingControl {
         /**
          * Renders the point as a billboarded quad.
          */
-        public void render(BufferBuilder buffer, Matrix4f matrix, Vec3d camera, Vec3d cameraLook) {
+        public void render(BufferBuilder buffer, Matrix4f matrix, Vec3 camera, Vec3 cameraLook) {
             int[] rgba = getRGBA(color);
 
             // Create two perpendicular vectors in the plane facing the camera
-            Vec3d viewDir = camera.subtract(position).normalize();
+            Vec3 viewDir = camera.subtract(position).normalize();
 
             // Find right and up vectors for the billboard
-            Vec3d worldUp = new Vec3d(0, 1, 0);
-            Vec3d right = worldUp.crossProduct(viewDir).normalize();
-            if (right.lengthSquared() < 0.001) {
+            Vec3 worldUp = new Vec3(0, 1, 0);
+            Vec3 right = worldUp.cross(viewDir).normalize();
+            if (right.lengthSqr() < 0.001) {
                 // Camera looking straight up/down - use a different reference vector
-                right = new Vec3d(1, 0, 0);
+                right = new Vec3(1, 0, 0);
             }
 
-            Vec3d up = viewDir.crossProduct(right).normalize();
+            Vec3 up = viewDir.cross(right).normalize();
 
             // Scale by size/2
-            right = right.multiply(size / 2.0);
-            up = up.multiply(size / 2.0);
+            right = right.scale(size / 2.0);
+            up = up.scale(size / 2.0);
 
             // Four corners of the quad
-            Vec3d topRight = position.add(up).add(right);
-            Vec3d topLeft = position.add(up).subtract(right);
-            Vec3d bottomLeft = position.subtract(up).subtract(right);
-            Vec3d bottomRight = position.subtract(up).add(right);
+            Vec3 topRight = position.add(up).add(right);
+            Vec3 topLeft = position.add(up).subtract(right);
+            Vec3 bottomLeft = position.subtract(up).subtract(right);
+            Vec3 bottomRight = position.subtract(up).add(right);
 
             // Draw as two triangles
             addVertex(buffer, matrix, camera, topRight, rgba);
@@ -526,13 +526,13 @@ public class DebugRenderer implements ILoggingControl {
         /**
          * Helper to add a vertex to the buffer.
          */
-        private void addVertex(BufferBuilder buffer, Matrix4f matrix, Vec3d camera, Vec3d pos, int[] rgba) {
+        private void addVertex(BufferBuilder buffer, Matrix4f matrix, Vec3 camera, Vec3 pos, int[] rgba) {
             buffer.vertex(matrix,
                             (float)(pos.x - camera.x),
                             (float)(pos.y - camera.y),
                             (float)(pos.z - camera.z))
                     .color(rgba[0], rgba[1], rgba[2], rgba[3])
-                    .next();
+                    .endVertex();
         }
     }
 
@@ -540,12 +540,12 @@ public class DebugRenderer implements ILoggingControl {
      * Represents a 3D box, rendered as billboarded lines for each edge.
      */
     private static class Box3D extends DebugElement {
-        private final Box box;
+        private final AABB box;
 
         /**
          * Creates a new box.
          */
-        public Box3D(Box box, int color, float width, int durationTicks) {
+        public Box3D(AABB box, int color, float width, int durationTicks) {
             super(color, width, durationTicks);
             this.box = box;
         }
@@ -555,7 +555,7 @@ public class DebugRenderer implements ILoggingControl {
          * For boxes we use the standard DEBUG_LINES to keep things simple,
          * but each edge could be replaced with a billboarded line if needed.
          */
-        public void render(BufferBuilder buffer, Matrix4f matrix, Vec3d camera, Vec3d cameraLook) {
+        public void render(BufferBuilder buffer, Matrix4f matrix, Vec3 camera, Vec3 cameraLook) {
             int[] rgba = getRGBA(color);
 
             // Bottom face
@@ -613,21 +613,21 @@ public class DebugRenderer implements ILoggingControl {
         /**
          * Helper to render a line segment.
          */
-        private void renderLine(BufferBuilder buffer, Matrix4f matrix, Vec3d camera,
+        private void renderLine(BufferBuilder buffer, Matrix4f matrix, Vec3 camera,
                                 int[] rgba, double x1, double y1, double z1, double x2, double y2, double z2) {
             buffer.vertex(matrix,
                             (float)(x1 - camera.x),
                             (float)(y1 - camera.y),
                             (float)(z1 - camera.z))
                     .color(rgba[0], rgba[1], rgba[2], rgba[3])
-                    .next();
+                    .endVertex();
 
             buffer.vertex(matrix,
                             (float)(x2 - camera.x),
                             (float)(y2 - camera.y),
                             (float)(z2 - camera.z))
                     .color(rgba[0], rgba[1], rgba[2], rgba[3])
-                    .next();
+                    .endVertex();
         }
     }
 }

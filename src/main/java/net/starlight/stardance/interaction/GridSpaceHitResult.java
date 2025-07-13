@@ -1,8 +1,8 @@
 package net.starlight.stardance.interaction;
 
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 
 /**
@@ -26,14 +26,14 @@ public interface GridSpaceHitResult {
      * This is where the player sees the block/entity visually.
      * @return World coordinates of the interaction
      */
-    Vec3d getWorldPos();
+    Vec3 getWorldPos();
 
     /**
      * Gets the GridSpace coordinates where the block/entity actually exists.
      * This is where the interaction should be executed for it to take effect.
      * @return GridSpace coordinates of the actual block/entity
      */
-    Vec3d getGridSpacePos();
+    Vec3 getGridSpacePos();
 
     /**
      * Gets the GridSpace block position (discrete coordinates).

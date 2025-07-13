@@ -1,11 +1,9 @@
 package net.starlight.stardance.utils;
 
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
-import net.minecraft.world.World;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.BlockHitResult;
 import net.starlight.stardance.physics.PhysicsEngine;
 
 import java.util.Optional;
@@ -22,25 +20,25 @@ public class GridSpaceRaycastUtils implements ILoggingControl {
     /**
      * Enhanced raycast that includes grids with physics precision fix.
      */
-    public static BlockHitResult raycastIncludeGrids(World world, RaycastContext context) {
+    public static BlockHitResult raycastIncludeGrids(Level world, ClipContext context) {
         try {
             // 1. Perform physics raycast first (grids)
             PhysicsEngine engine = engineManager.getEngine(world);
             Optional<PhysicsEngine.PhysicsRaycastResult> physicsHit = Optional.empty();
 
             if (engine != null) {
-                physicsHit = engine.raycastGrids(context.getStart(), context.getEnd());
+                physicsHit = engine.raycastGrids(context.getFrom(), context.getTo());
             }
 
             // 2. Perform vanilla world raycast
-            BlockHitResult vanillaHit = world.raycast(context);
+            BlockHitResult vanillaHit = world.clip(context);
 
             // 3. Return whichever is closer with PRECISION FIX
             if (physicsHit.isPresent()) {
                 PhysicsEngine.PhysicsRaycastResult gridHit = physicsHit.get();
 
-                double vanillaDistance = context.getStart().squaredDistanceTo(vanillaHit.getPos());
-                double gridDistance = context.getStart().squaredDistanceTo(gridHit.worldHitPos);
+                double vanillaDistance = context.getFrom().distanceToSqr(vanillaHit.getLocation());
+                double gridDistance = context.getFrom().distanceToSqr(gridHit.worldHitPos);
 
                 if (gridDistance < vanillaDistance) {
 //                    SLogger.log("GridSpaceRaycastUtils", "Grid hit is closer - using grid result with precision fix");
@@ -73,7 +71,7 @@ public class GridSpaceRaycastUtils implements ILoggingControl {
 
         } catch (Exception e) {
 //            SLogger.log("GridSpaceRaycastUtils", "Error in enhanced raycast: " + e.getMessage());
-            return world.raycast(context);
+            return world.clip(context);
         }
     }
 }

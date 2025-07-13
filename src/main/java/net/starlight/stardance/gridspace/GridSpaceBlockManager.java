@@ -1,10 +1,10 @@
 package net.starlight.stardance.gridspace;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.chunk.Chunk;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
@@ -26,7 +26,7 @@ public class GridSpaceBlockManager implements ILoggingControl {
     private final GridSpaceRegion region;
 
     /** Server world where blocks are placed */
-    private final ServerWorld world;
+    private final ServerLevel world;
 
     /** Tracks blocks placed in this region for cleanup purposes */
     private final Map<BlockPos, BlockState> placedBlocks = new ConcurrentHashMap<>();
@@ -90,7 +90,7 @@ public class GridSpaceBlockManager implements ILoggingControl {
             ensureChunkLoaded(gridSpacePos);
 
             // Place the block
-            world.setBlockState(gridSpacePos, blockState);
+            world.setBlockAndUpdate(gridSpacePos, blockState);
 
             // Track the placement for cleanup
             placedBlocks.put(gridSpacePos, blockState);
@@ -126,7 +126,7 @@ public class GridSpaceBlockManager implements ILoggingControl {
 
         try {
             // Replace with air
-            world.setBlockState(gridSpacePos, Blocks.AIR.getDefaultState());
+            world.setBlockAndUpdate(gridSpacePos, Blocks.AIR.defaultBlockState());
 
             // Remove from tracking
             placedBlocks.remove(gridSpacePos);
@@ -214,7 +214,7 @@ public class GridSpaceBlockManager implements ILoggingControl {
 
         for (BlockPos gridSpacePos : blocksToRemove.keySet()) {
             try {
-                world.setBlockState(gridSpacePos, Blocks.AIR.getDefaultState());
+                world.setBlockAndUpdate(gridSpacePos, Blocks.AIR.defaultBlockState());
                 removedCount++;
             } catch (Exception e) {
                 SLogger.log(this, "Failed to remove block at " + gridSpacePos + " during cleanup: " + e.getMessage());
@@ -252,7 +252,7 @@ public class GridSpaceBlockManager implements ILoggingControl {
 
             // Force load the chunk without triggering world generation
             // This prevents the world generator from trying to generate structures
-            Chunk chunk = world.getChunk(chunkX, chunkZ);
+            ChunkAccess chunk = world.getChunk(chunkX, chunkZ);
             if (chunk == null) {
                 SLogger.log(this, "Warning: Could not load GridSpace chunk at " + chunkX + ", " + chunkZ +
                         " - this may cause issues");

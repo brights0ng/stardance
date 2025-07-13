@@ -2,11 +2,11 @@ package net.starlight.stardance.utils;
 
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
-import net.minecraft.item.BlockItem;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.BlockItem;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.physics.SubchunkCoordinates;
 import net.starlight.stardance.physics.SubchunkManager;
@@ -22,23 +22,23 @@ public class BlockEventHandler {
 
         // Register block break event
         PlayerBlockBreakEvents.AFTER.register((world, player, pos, state, blockEntity) -> {
-            if (!world.isClient) {
-                onBlockUpdate(pos, (ServerWorld) world);
+            if (!world.isClientSide) {
+                onBlockUpdate(pos, (ServerLevel) world);
             }
         });
 
         // Register block place event
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
-            if (!world.isClient && hand == Hand.MAIN_HAND) {
-                if (player.getStackInHand(hand).getItem() instanceof BlockItem) {
+            if (!world.isClientSide && hand == InteractionHand.MAIN_HAND) {
+                if (player.getItemInHand(hand).getItem() instanceof BlockItem) {
                     // Wait until the next tick to check if a block was placed
                     world.getServer().execute(() -> {
-                        BlockPos pos = hitResult.getBlockPos().offset(hitResult.getSide());
-                        onBlockUpdate(pos, (ServerWorld) world);
+                        BlockPos pos = hitResult.getBlockPos().relative(hitResult.getDirection());
+                        onBlockUpdate(pos, (ServerLevel) world);
                     });
                 }
             }
-            return ActionResult.PASS;
+            return InteractionResult.PASS;
         });
     }
 
@@ -50,7 +50,7 @@ public class BlockEventHandler {
     }
 
     // In your BlockEventHandler
-    public void onBlockUpdate(BlockPos pos, ServerWorld world) {
+    public void onBlockUpdate(BlockPos pos, ServerLevel world) {
         SubchunkCoordinates coords = getSubchunkCoordinates(pos);
         subchunkManager.markSubchunkDirty(coords);
 

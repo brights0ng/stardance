@@ -10,11 +10,9 @@ import com.bulletphysics.dynamics.DynamicsWorld;
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.dynamics.constraintsolver.ConstraintSolver;
 import com.bulletphysics.dynamics.constraintsolver.SequentialImpulseConstraintSolver;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.entity.EntityPhysicsManager;
 import net.starlight.stardance.utils.BlockEventHandler;
@@ -51,7 +49,7 @@ public class PhysicsEngine implements ILoggingControl {
     // -------------------------------------------
 
     private final Object physicsLock = new Object();
-    private final ServerWorld serverWorld;
+    private final ServerLevel serverWorld;
 
     // Bullet physics core components
     private final BroadphaseInterface broadphase;
@@ -75,7 +73,7 @@ public class PhysicsEngine implements ILoggingControl {
     /**
      * Creates a new physics engine for the given ServerWorld.
      */
-    public PhysicsEngine(ServerWorld serverWorld) {
+    public PhysicsEngine(ServerLevel serverWorld) {
         this.serverWorld = serverWorld;
 
         // Initialize Bullet Physics components
@@ -106,7 +104,7 @@ public class PhysicsEngine implements ILoggingControl {
      * Advances the physics simulation by one game tick.
      * Called once per server tick for the world.
      */
-    public void tick(ServerWorld world) {
+    public void tick(ServerLevel world) {
         // Update chunk-based data
         subchunkManager.updateDirtySubchunks();
 
@@ -199,7 +197,7 @@ public class PhysicsEngine implements ILoggingControl {
     /**
      * VS2-style physics raycast against all grids using JBullet collision detection.
      */
-    public Optional<PhysicsRaycastResult> raycastGrids(Vec3d rayStart, Vec3d rayEnd) {
+    public Optional<PhysicsRaycastResult> raycastGrids(Vec3 rayStart, Vec3 rayEnd) {
         try {
             // Convert to JBullet vectors
             Vector3f bulletStart = new Vector3f((float) rayStart.x, (float) rayStart.y, (float) rayStart.z);
@@ -257,7 +255,7 @@ public class PhysicsEngine implements ILoggingControl {
             LocalGrid hitGrid = (LocalGrid) collisionObject.getUserPointer();
 
             // Convert world hit point to GridSpace coordinates
-            Vec3d worldHitPos = new Vec3d(hitPoint.x, hitPoint.y, hitPoint.z);
+            Vec3 worldHitPos = new Vec3(hitPoint.x, hitPoint.y, hitPoint.z);
             BlockPos gridSpacePos = worldToGridSpace(worldHitPos, hitGrid);
 
             return new PhysicsRaycastResult(
@@ -269,7 +267,7 @@ public class PhysicsEngine implements ILoggingControl {
             );
         }
 
-        private BlockPos worldToGridSpace(Vec3d worldPos, LocalGrid grid) {
+        private BlockPos worldToGridSpace(Vec3 worldPos, LocalGrid grid) {
             // Transform world → grid-local → GridSpace
             Vector3d worldPoint = new Vector3d(worldPos.x, worldPos.y, worldPos.z);
             Vector3d gridLocalPoint = grid.worldToGridLocal(worldPoint);
@@ -283,13 +281,13 @@ public class PhysicsEngine implements ILoggingControl {
     }
 
     public static class PhysicsRaycastResult {
-        public final Vec3d worldHitPos;
+        public final Vec3 worldHitPos;
         public final BlockPos gridSpacePos;
         public final LocalGrid grid;
         public final float hitFraction;
         public final Vector3f hitNormal; // ← ADD THIS
 
-        public PhysicsRaycastResult(Vec3d worldHitPos, BlockPos gridSpacePos, LocalGrid grid,
+        public PhysicsRaycastResult(Vec3 worldHitPos, BlockPos gridSpacePos, LocalGrid grid,
                                     float hitFraction, Vector3f hitNormal) {
             this.worldHitPos = worldHitPos;
             this.gridSpacePos = gridSpacePos;

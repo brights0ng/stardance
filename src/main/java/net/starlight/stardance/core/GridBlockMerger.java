@@ -3,7 +3,7 @@ package net.starlight.stardance.core;
 import com.bulletphysics.collision.shapes.BoxShape;
 import com.bulletphysics.collision.shapes.CompoundShape;
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
 import net.starlight.stardance.utils.SLogger;
 import org.joml.Vector3i;
 

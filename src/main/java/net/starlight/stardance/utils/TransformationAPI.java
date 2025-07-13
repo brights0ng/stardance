@@ -1,9 +1,9 @@
 package net.starlight.stardance.utils;
 
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import org.joml.Matrix4d;
@@ -55,10 +55,10 @@ public class TransformationAPI implements ILoggingControl {
     /**
      * ENHANCED DEBUG: Logs detailed information about worldToGridSpace transformation.
      */
-    public Optional<GridSpaceTransformResult> worldToGridSpace(Vec3d worldPos, World world) {
+    public Optional<GridSpaceTransformResult> worldToGridSpace(Vec3 worldPos, Level world) {
         SLogger.log(this, "=== TRANSFORMATION API DEBUG ===");
         SLogger.log(this, "Input world position: " + worldPos);
-        SLogger.log(this, "World: " + (world.isClient ? "CLIENT" : "SERVER"));
+        SLogger.log(this, "World: " + (world.isClientSide ? "CLIENT" : "SERVER"));
 
         // Find which grid (if any) contains this world position
         SLogger.log(this, "Looking for grids at world position...");
@@ -90,7 +90,7 @@ public class TransformationAPI implements ILoggingControl {
                         SLogger.log(this, "  Grid-local point: " + gridLocalPoint);
 
                         // FIXED: Keep continuous coordinates for round-trip accuracy
-                        Vec3d gridLocalVec = new Vec3d(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
+                        Vec3 gridLocalVec = new Vec3(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
 
                         // Convert to discrete BlockPos for block-based operations
                         BlockPos gridLocalPos = new BlockPos(
@@ -102,7 +102,7 @@ public class TransformationAPI implements ILoggingControl {
                         SLogger.log(this, "  Grid-local BlockPos: " + gridLocalPos);
 
                         // Transform CONTINUOUS grid-local → GridSpace for accuracy
-                        Vec3d gridSpaceVec = gridLocalToGridSpaceVec3d(grid, gridLocalVec);
+                        Vec3 gridSpaceVec = gridLocalToGridSpaceVec3d(grid, gridLocalVec);
 
                         // Also provide discrete GridSpace coordinates for block operations
                         BlockPos gridSpacePos = grid.gridLocalToGridSpace(gridLocalPos);
@@ -140,10 +140,10 @@ public class TransformationAPI implements ILoggingControl {
      * @param grid The grid this position belongs to
      * @return World coordinates
      */
-    public Vec3d gridSpaceToWorld(Vec3d gridSpaceVec, LocalGrid grid) {
+    public Vec3 gridSpaceToWorld(Vec3 gridSpaceVec, LocalGrid grid) {
         try {
             // Transform GridSpace → grid-local (CONTINUOUS)
-            Vec3d gridLocalVec = gridSpaceVecToGridLocal(grid, gridSpaceVec);
+            Vec3 gridLocalVec = gridSpaceVecToGridLocal(grid, gridSpaceVec);
 
             // Transform grid-local → world using physics matrix
             Vector3d gridLocalPoint = new Vector3d(gridLocalVec.x, gridLocalVec.y, gridLocalVec.z);
@@ -151,7 +151,7 @@ public class TransformationAPI implements ILoggingControl {
 
         } catch (Exception e) {
             SLogger.log(this, "Error transforming GridSpace to world: " + e.getMessage());
-            return Vec3d.ZERO;
+            return Vec3.ZERO;
         }
     }
 
@@ -162,10 +162,10 @@ public class TransformationAPI implements ILoggingControl {
      * @param grid The grid this position belongs to
      * @return World coordinates
      */
-    public Vec3d gridSpaceToWorld(BlockPos gridSpacePos, LocalGrid grid) {
+    public Vec3 gridSpaceToWorld(BlockPos gridSpacePos, LocalGrid grid) {
         try {
             // Convert BlockPos to Vec3d (center of block)
-            Vec3d gridSpaceVec = new Vec3d(
+            Vec3 gridSpaceVec = new Vec3(
                     gridSpacePos.getX() + 0.5,
                     gridSpacePos.getY() + 0.5,
                     gridSpacePos.getZ() + 0.5
@@ -175,7 +175,7 @@ public class TransformationAPI implements ILoggingControl {
 
         } catch (Exception e) {
             SLogger.log(this, "Error transforming GridSpace BlockPos to world: " + e.getMessage());
-            return Vec3d.ZERO;
+            return Vec3.ZERO;
         }
     }
 
@@ -187,7 +187,7 @@ public class TransformationAPI implements ILoggingControl {
      * Finds which grid (if any) contains the given world position.
      * Uses physics transforms and bounding boxes.
      */
-    public Optional<LocalGrid> findGridAtWorldPosition(Vec3d worldPos, World world) {
+    public Optional<LocalGrid> findGridAtWorldPosition(Vec3 worldPos, Level world) {
         PhysicsEngine engine = engineManager.getEngine(world);
         if (engine == null) {
             return Optional.empty();
@@ -206,7 +206,7 @@ public class TransformationAPI implements ILoggingControl {
     /**
      * FIXED: Uses physics collision shapes instead of block-by-block checking.
      */
-    public boolean isWorldPositionInGrid(Vec3d worldPos, LocalGrid grid) {
+    public boolean isWorldPositionInGrid(Vec3 worldPos, LocalGrid grid) {
         try {
             // First check AABB for performance
             if (!isWorldPositionInGridAABB(worldPos, grid)) {
@@ -215,7 +215,7 @@ public class TransformationAPI implements ILoggingControl {
 
             // Use physics raycast to check collision shape
             // Cast a very short ray from the position to see if it hits the grid
-            Vec3d shortOffset = new Vec3d(0.01, 0, 0); // 1cm offset
+            Vec3 shortOffset = new Vec3(0.01, 0, 0); // 1cm offset
 
             PhysicsEngine engine = engineManager.getEngine(grid.getWorld());
             Optional<PhysicsEngine.PhysicsRaycastResult> result =
@@ -232,7 +232,7 @@ public class TransformationAPI implements ILoggingControl {
      * Alternative method: check if world position is within grid's AABB.
      * More performant but less precise than block-by-block checking.
      */
-    public boolean isWorldPositionInGridAABB(Vec3d worldPos, LocalGrid grid) {
+    public boolean isWorldPositionInGridAABB(Vec3 worldPos, LocalGrid grid) {
         try {
             Vector3f minAabb = new Vector3f();
             Vector3f maxAabb = new Vector3f();
@@ -254,7 +254,7 @@ public class TransformationAPI implements ILoggingControl {
     /**
      * Transforms grid-local coordinates to world coordinates using physics matrix.
      */
-    public Vec3d gridLocalToWorld(LocalGrid grid, Vector3d gridLocalPoint) {
+    public Vec3 gridLocalToWorld(LocalGrid grid, Vector3d gridLocalPoint) {
         try {
             // CRITICAL FIX: Subtract centroid offset first
             Vector3f adjustedPoint = new Vector3f(
@@ -270,18 +270,18 @@ public class TransformationAPI implements ILoggingControl {
             // Apply transform
             physicsTransform.transform(adjustedPoint);
 
-            return new Vec3d(adjustedPoint.x, adjustedPoint.y, adjustedPoint.z);
+            return new Vec3(adjustedPoint.x, adjustedPoint.y, adjustedPoint.z);
 
         } catch (Exception e) {
             SLogger.log(this, "Error transforming grid-local to world: " + e.getMessage());
-            return Vec3d.ZERO;
+            return Vec3.ZERO;
         }
     }
 
     /**
      * FIXED: Transforms continuous grid-local coordinates to GridSpace coordinates.
      */
-    private Vec3d gridLocalToGridSpaceVec3d(LocalGrid grid, Vec3d gridLocalVec) {
+    private Vec3 gridLocalToGridSpaceVec3d(LocalGrid grid, Vec3 gridLocalVec) {
         // Apply GridSpace center offset
         double gridSpaceX = gridLocalVec.x + LocalGrid.GRIDSPACE_CENTER_OFFSET;
         double gridSpaceY = gridLocalVec.y + LocalGrid.GRIDSPACE_CENTER_OFFSET;
@@ -290,7 +290,7 @@ public class TransformationAPI implements ILoggingControl {
         // Add region origin
         BlockPos regionOrigin = grid.getGridSpaceRegion().getRegionOrigin();
 
-        return new Vec3d(
+        return new Vec3(
                 gridSpaceX + regionOrigin.getX(),
                 gridSpaceY + regionOrigin.getY(),
                 gridSpaceZ + regionOrigin.getZ()
@@ -300,7 +300,7 @@ public class TransformationAPI implements ILoggingControl {
     /**
      * FIXED: Transforms continuous GridSpace coordinates to grid-local coordinates.
      */
-    private Vec3d gridSpaceVecToGridLocal(LocalGrid grid, Vec3d gridSpaceVec) {
+    private Vec3 gridSpaceVecToGridLocal(LocalGrid grid, Vec3 gridSpaceVec) {
         // Subtract region origin
         BlockPos regionOrigin = grid.getGridSpaceRegion().getRegionOrigin();
 
@@ -309,7 +309,7 @@ public class TransformationAPI implements ILoggingControl {
         double regionLocalZ = gridSpaceVec.z - regionOrigin.getZ();
 
         // Remove GridSpace center offset
-        return new Vec3d(
+        return new Vec3(
                 regionLocalX - LocalGrid.GRIDSPACE_CENTER_OFFSET,
                 regionLocalY - LocalGrid.GRIDSPACE_CENTER_OFFSET,
                 regionLocalZ - LocalGrid.GRIDSPACE_CENTER_OFFSET
@@ -324,16 +324,16 @@ public class TransformationAPI implements ILoggingControl {
      * VS2-style distance calculation that uses world coordinates for accuracy.
      * Equivalent to VS2's VSGameUtilsKt.squaredDistanceBetweenInclShips()
      */
-    public static double squaredDistanceBetweenInclGrids(World world, Vec3d pos1, Vec3d pos2) {
+    public static double squaredDistanceBetweenInclGrids(Level world, Vec3 pos1, Vec3 pos2) {
         try {
             // Convert positions to world coordinates if they're in GridSpace
-            Vec3d worldPos1 = ensureWorldCoordinates(pos1, world);
-            Vec3d worldPos2 = ensureWorldCoordinates(pos2, world);
+            Vec3 worldPos1 = ensureWorldCoordinates(pos1, world);
+            Vec3 worldPos2 = ensureWorldCoordinates(pos2, world);
 
-            return worldPos1.squaredDistanceTo(worldPos2);
+            return worldPos1.distanceToSqr(worldPos2);
         } catch (Exception e) {
             SLogger.log("TransformationAPI", "Error in distance calculation, falling back to direct: " + e.getMessage());
-            return pos1.squaredDistanceTo(pos2); // Fallback to direct calculation
+            return pos1.distanceToSqr(pos2); // Fallback to direct calculation
         }
     }
 
@@ -341,27 +341,27 @@ public class TransformationAPI implements ILoggingControl {
      * VS2-style coordinate getter that ensures we always return world coordinates.
      * Equivalent to VS2's VSGameUtilsKt.getWorldCoordinates()
      */
-    public static Vec3d getWorldCoordinates(World world, BlockPos pos, Vec3d localOffset) {
+    public static Vec3 getWorldCoordinates(Level world, BlockPos pos, Vec3 localOffset) {
         // Check if this position is in GridSpace
         Optional<GridSpaceTransformResult> gridResult = getInstance().detectGridSpacePosition(pos, world);
 
         if (gridResult.isPresent()) {
             GridSpaceTransformResult result = gridResult.get();
             // Transform GridSpace + offset back to world coordinates
-            Vec3d gridSpacePos = new Vec3d(pos.getX() + localOffset.x, pos.getY() + localOffset.y, pos.getZ() + localOffset.z);
+            Vec3 gridSpacePos = new Vec3(pos.getX() + localOffset.x, pos.getY() + localOffset.y, pos.getZ() + localOffset.z);
             return getInstance().gridSpaceToWorld(gridSpacePos, result.grid);
         }
 
         // Regular world position
-        return new Vec3d(pos.getX() + localOffset.x, pos.getY() + localOffset.y, pos.getZ() + localOffset.z);
+        return new Vec3(pos.getX() + localOffset.x, pos.getY() + localOffset.y, pos.getZ() + localOffset.z);
     }
 
     /**
      * Helper to ensure coordinates are in world space, not GridSpace.
      */
-    private static Vec3d ensureWorldCoordinates(Vec3d pos, World world) {
+    private static Vec3 ensureWorldCoordinates(Vec3 pos, Level world) {
         BlockPos blockPos = new BlockPos((int)Math.floor(pos.x), (int)Math.floor(pos.y), (int)Math.floor(pos.z));
-        Vec3d offset = new Vec3d(pos.x - blockPos.getX(), pos.y - blockPos.getY(), pos.z - blockPos.getZ());
+        Vec3 offset = new Vec3(pos.x - blockPos.getX(), pos.y - blockPos.getY(), pos.z - blockPos.getZ());
         return getWorldCoordinates(world, blockPos, offset);
     }
 
@@ -369,7 +369,7 @@ public class TransformationAPI implements ILoggingControl {
      * Detects if a BlockPos is in GridSpace coordinates.
      * Returns the grid and transformation info if found.
      */
-    public Optional<GridSpaceTransformResult> detectGridSpacePosition(BlockPos pos, World world) {
+    public Optional<GridSpaceTransformResult> detectGridSpacePosition(BlockPos pos, Level world) {
         PhysicsEngine engine = engineManager.getEngine(world);
         if (engine == null) return Optional.empty();
 
@@ -377,8 +377,8 @@ public class TransformationAPI implements ILoggingControl {
         for (LocalGrid grid : engine.getGrids()) {
             if (!grid.isDestroyed() && grid.getGridSpaceRegion().containsGridSpacePosition(pos)) {
                 // Transform back to get all coordinate representations
-                Vec3d gridSpaceVec = new Vec3d(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                Vec3d gridLocalVec = gridSpaceVecToGridLocal(grid, gridSpaceVec);
+                Vec3 gridSpaceVec = new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                Vec3 gridLocalVec = gridSpaceVecToGridLocal(grid, gridSpaceVec);
                 BlockPos gridLocalPos = new BlockPos((int)Math.floor(gridLocalVec.x), (int)Math.floor(gridLocalVec.y), (int)Math.floor(gridLocalVec.z));
 
                 return Optional.of(new GridSpaceTransformResult(grid, pos, gridSpaceVec, gridLocalVec, gridLocalPos));
@@ -392,7 +392,7 @@ public class TransformationAPI implements ILoggingControl {
      * ENHANCED: Find the closest actual block in GridSpace with tolerance.
      * Fixes physics engine precision issues by snapping to nearest real block.
      */
-    public Optional<GridSpaceTransformResult> findNearestGridSpaceBlock(BlockPos approximateGridSpacePos, World world, double tolerance) {
+    public Optional<GridSpaceTransformResult> findNearestGridSpaceBlock(BlockPos approximateGridSpacePos, Level world, double tolerance) {
         try {
             // First try exact match
             Optional<GridSpaceTransformResult> exactMatch = detectGridSpacePosition(approximateGridSpacePos, world);
@@ -411,7 +411,7 @@ public class TransformationAPI implements ILoggingControl {
                     for (int dz = -searchRadius; dz <= searchRadius; dz++) {
                         if (dx == 0 && dy == 0 && dz == 0) continue; // Already tried exact
 
-                        BlockPos testPos = approximateGridSpacePos.add(dx, dy, dz);
+                        BlockPos testPos = approximateGridSpacePos.offset(dx, dy, dz);
                         Optional<GridSpaceTransformResult> testResult = detectGridSpacePosition(testPos, world);
 
                         if (testResult.isPresent()) {
@@ -441,7 +441,7 @@ public class TransformationAPI implements ILoggingControl {
      * ENHANCED: Get GridSpace transform result with physics precision fix.
      * Uses tolerance to handle physics engine coordinate precision issues.
      */
-    public Optional<GridSpaceTransformResult> worldToGridSpaceWithTolerance(Vec3d worldPos, World world) {
+    public Optional<GridSpaceTransformResult> worldToGridSpaceWithTolerance(Vec3 worldPos, Level world) {
         // First try the regular transformation
         Optional<GridSpaceTransformResult> regularResult = worldToGridSpace(worldPos, world);
         if (regularResult.isPresent()) {
@@ -474,7 +474,7 @@ public class TransformationAPI implements ILoggingControl {
     /**
      * ENHANCED: Debug method with round-trip accuracy testing.
      */
-    public void debugTransformationChain(Vec3d worldPos, World world) {
+    public void debugTransformationChain(Vec3 worldPos, Level world) {
         SLogger.log(this, "=== TRANSFORMATION DEBUG ===");
         SLogger.log(this, "World position: " + worldPos);
 
@@ -488,7 +488,7 @@ public class TransformationAPI implements ILoggingControl {
             SLogger.log(this, "GridSpace continuous: " + r.gridSpaceVec);
 
             // Test round-trip transformation with CONTINUOUS coordinates
-            Vec3d backToWorld = gridSpaceToWorld(r.gridSpaceVec, r.grid);
+            Vec3 backToWorld = gridSpaceToWorld(r.gridSpaceVec, r.grid);
             double error = worldPos.distanceTo(backToWorld);
             SLogger.log(this, "Round-trip world: " + backToWorld);
             SLogger.log(this, "Round-trip error: " + String.format("%.6f blocks", error));
@@ -528,12 +528,12 @@ public class TransformationAPI implements ILoggingControl {
     public static class GridSpaceTransformResult {
         public final LocalGrid grid;
         public final BlockPos gridSpacePos;      // Discrete GridSpace coordinates (for block operations)
-        public final Vec3d gridSpaceVec;         // Continuous GridSpace coordinates (for accurate transforms)
-        public final Vec3d gridLocalVec;         // Continuous grid-local coordinates (for round-trips)
+        public final Vec3 gridSpaceVec;         // Continuous GridSpace coordinates (for accurate transforms)
+        public final Vec3 gridLocalVec;         // Continuous grid-local coordinates (for round-trips)
         public final BlockPos gridLocalPos;     // Discrete grid-local coordinates (for block operations)
 
-        public GridSpaceTransformResult(LocalGrid grid, BlockPos gridSpacePos, Vec3d gridSpaceVec,
-                                        Vec3d gridLocalVec, BlockPos gridLocalPos) {
+        public GridSpaceTransformResult(LocalGrid grid, BlockPos gridSpacePos, Vec3 gridSpaceVec,
+                                        Vec3 gridLocalVec, BlockPos gridLocalPos) {
             this.grid = grid;
             this.gridSpacePos = gridSpacePos;
             this.gridSpaceVec = gridSpaceVec;

@@ -7,10 +7,10 @@ import com.bulletphysics.dynamics.DynamicsWorld;
 import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.dynamics.RigidBodyConstructionInfo;
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.block.BlockState;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.state.BlockState;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;  // Assuming you have this logging utility
 
@@ -43,7 +43,7 @@ public class SubchunkMesh implements ILoggingControl {
      * This version generates vertices in local coordinates (0..subchunkSize) and then uses the
      * rigid body transform to place the mesh in world space.
      */
-    public void generateMesh(ServerWorld world) {
+    public void generateMesh(ServerLevel world) {
         SLogger.log(this, "Starting mesh generation for subchunk at coords: " + coords);
         List<Vector3f> vertices = new ArrayList<>();
         List<Integer> indices = new ArrayList<>();
@@ -118,7 +118,7 @@ public class SubchunkMesh implements ILoggingControl {
      * For a given face direction, iterates through the subchunk slices, builds a 2D mask of exposed faces,
      * and processes that mask with the greedy meshing algorithm.
      */
-    private void generateGreedyMeshForFace(ServerWorld world, Direction face, int baseX, int baseY, int baseZ, int subchunkSize, List<Vector3f> vertices, List<Integer> indices) {
+    private void generateGreedyMeshForFace(ServerLevel world, Direction face, int baseX, int baseY, int baseZ, int subchunkSize, List<Vector3f> vertices, List<Integer> indices) {
         switch(face) {
             case UP:
                 for (int y = 0; y < subchunkSize; y++) {

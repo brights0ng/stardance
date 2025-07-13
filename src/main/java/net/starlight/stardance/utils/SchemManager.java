@@ -1,15 +1,15 @@
 package net.starlight.stardance.utils;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtIo;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.Property;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 import net.starlight.stardance.core.LocalBlock;
 import net.starlight.stardance.core.LocalGrid;
 
@@ -38,8 +38,8 @@ public class SchemManager implements ILoggingControl{
 
 
 
-    public void importSchematic(String fileName, Vector3d position, ServerWorld world) throws IOException {
-        LocalGrid grid = new LocalGrid(position, new Quat4f(0, 0, 0, 1), world, Blocks.AIR.getDefaultState());
+    public void importSchematic(String fileName, Vector3d position, ServerLevel world) throws IOException {
+        LocalGrid grid = new LocalGrid(position, new Quat4f(0, 0, 0, 1), world, Blocks.AIR.defaultBlockState());
         SLogger.log(this, "Importing schematic " + fileName);
         grid.importBlocks(loadSchematic(fileName));
         grid.removeBlock(new BlockPos(0,0,0));
@@ -77,7 +77,7 @@ public class SchemManager implements ILoggingControl{
 
 
     private static ParsedSchematic parseSchematic(byte[] schemData) throws IOException {
-        NbtCompound nbtData = NbtIo.readCompressed(new ByteArrayInputStream(schemData));
+        CompoundTag nbtData = NbtIo.readCompressed(new ByteArrayInputStream(schemData));
 
         ParsedSchematic parsed = new ParsedSchematic();
 
@@ -87,10 +87,10 @@ public class SchemManager implements ILoggingControl{
         parsed.length = nbtData.getShort("Length");
 
         // Read the palette
-        NbtCompound paletteTag = nbtData.getCompound("Palette");
+        CompoundTag paletteTag = nbtData.getCompound("Palette");
         Map<Integer, BlockState> palette = new HashMap<>();
 
-        for (String key : paletteTag.getKeys()) {
+        for (String key : paletteTag.getAllKeys()) {
             int index = paletteTag.getInt(key);
             BlockState state = getBlockStateFromString(key);
             palette.put(index, state);
@@ -165,13 +165,13 @@ public class SchemManager implements ILoggingControl{
         String propertiesString = parts.length > 1 ? parts[1].replace("]", "") : "";
 
         // Get the block from the registry
-        Block block = Registries.BLOCK.get(new Identifier(blockId));
+        Block block = BuiltInRegistries.BLOCK.get(new ResourceLocation(blockId));
         if (block == null) {
             throw new IllegalArgumentException("Invalid block ID: " + blockId);
         }
 
         // Start with the default block state
-        BlockState blockState = block.getDefaultState();
+        BlockState blockState = block.defaultBlockState();
 
         // If there are properties, parse and apply them
         if (!propertiesString.isEmpty()) {
@@ -201,9 +201,9 @@ public class SchemManager implements ILoggingControl{
 
     // Helper method to apply a property value
     private static <T extends Comparable<T>> BlockState applyProperty(BlockState state, Property<T> property, String value) {
-        Optional<T> optionalValue = property.parse(value);
+        Optional<T> optionalValue = property.getValue(value);
         if (optionalValue.isPresent()) {
-            return state.with(property, optionalValue.get());
+            return state.setValue(property, optionalValue.get());
         } else {
             throw new IllegalArgumentException("Invalid value for property " + property.getName() + ": " + value);
         }

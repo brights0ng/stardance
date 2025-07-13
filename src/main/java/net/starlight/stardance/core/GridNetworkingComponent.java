@@ -3,11 +3,6 @@ package net.starlight.stardance.core;
 import com.bulletphysics.linearmath.Transform;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.network.PacketByteBuf;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.math.BlockPos;
 import net.starlight.stardance.network.GridNetwork;
 import net.starlight.stardance.utils.SLogger;
 
@@ -199,7 +194,7 @@ class GridNetworkingComponent {
     private void sendPhysicsStateUpdate() {
         try {
             // ULTRA-AGGRESSIVE FIX: Strictly one update per server tick
-            long currentServerTick = grid.getWorld().getTime();
+            long currentServerTick = grid.getWorld().getGameTime();
 
             // If we've already sent an update this tick, absolutely refuse to send another
             if (lastPhysicsUpdateTime == currentServerTick) {

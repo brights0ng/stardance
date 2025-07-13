@@ -1,13 +1,14 @@
 package net.starlight.stardance.utils;
 
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.server.world.ServerWorld;
 import net.starlight.stardance.Stardance;
 import org.slf4j.Logger;
 
 import static net.starlight.stardance.Stardance.serverInstance;
+
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 public class SLogger {
     // Reference to your mod's logger
@@ -24,7 +25,7 @@ public class SLogger {
 
         // Send to chat if enabled
         if (logger.stardance$isChatLoggingEnabled() & serverInstance != null) {
-            for (ServerWorld world : serverInstance.getWorlds()) {
+            for (ServerLevel world : serverInstance.getAllLevels()) {
                 sendToChat(world, logMessage);
             }
         }
@@ -38,11 +39,11 @@ public class SLogger {
     }
 
     // Method to send a message to all players in the world
-    private static void sendToChat(ServerWorld world, String message) {
-        Text text = Text.literal(message).formatted(Formatting.YELLOW);
+    private static void sendToChat(ServerLevel world, String message) {
+        Component text = Component.literal(message).withStyle(ChatFormatting.YELLOW);
 
-        for (ServerPlayerEntity player : world.getPlayers()) {
-            player.sendMessage(text, false);
+        for (ServerPlayer player : world.players()) {
+            player.displayClientMessage(text, false);
         }
     }
 }

@@ -1,8 +1,8 @@
 package net.starlight.stardance.interaction;
 
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 
 /**
@@ -10,11 +10,11 @@ import net.starlight.stardance.core.LocalGrid;
      */
     public class GridRaycastHit {
         public final BlockPos gridSpacePos;           // GridSpace coordinates (for interaction)
-        public final Vec3d visualHitPos;              // World coordinates (for distance calculation)
+        public final Vec3 visualHitPos;              // World coordinates (for distance calculation)
         public final BlockHitResult transformedResult; // Result with GridSpace coordinates
         final LocalGrid grid;
 
-        public GridRaycastHit(BlockPos gridSpacePos, Vec3d visualHitPos, BlockHitResult transformedResult, LocalGrid grid) {
+        public GridRaycastHit(BlockPos gridSpacePos, Vec3 visualHitPos, BlockHitResult transformedResult, LocalGrid grid) {
             this.gridSpacePos = gridSpacePos;
             this.visualHitPos = visualHitPos;
             this.transformedResult = transformedResult;

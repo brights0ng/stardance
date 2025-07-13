@@ -2,20 +2,20 @@ package net.starlight.stardance.item;
 
 import com.bulletphysics.dynamics.RigidBody;
 import com.google.common.collect.Multimap;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.attribute.EntityAttribute;
-import net.minecraft.entity.attribute.EntityAttributeModifier;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.Hand;
-import net.minecraft.util.TypedActionResult;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -36,30 +36,30 @@ public class ImpulseToolItem extends Item implements ILoggingControl {
     private static final float DEFAULT_IMPULSE_STRENGTH = 1000.0f;
     private static final float MAX_IMPULSE_DISTANCE = 64.0f;
 
-    public ImpulseToolItem(Settings settings) {
+    public ImpulseToolItem(Properties settings) {
         super(settings);
     }
 
     @Override
-    public TypedActionResult<ItemStack> use(World world, PlayerEntity player, Hand hand) {
-        if (world.isClient) {
-            return TypedActionResult.pass(player.getStackInHand(hand));
+    public InteractionResultHolder<ItemStack> use(Level world, Player player, InteractionHand hand) {
+        if (world.isClientSide) {
+            return InteractionResultHolder.pass(player.getItemInHand(hand));
         }
 
         // Get the item stack
-        ItemStack stack = player.getStackInHand(hand);
+        ItemStack stack = player.getItemInHand(hand);
 
         // Perform a raycast to find what the player is looking at
-        HitResult hitResult = player.raycast(MAX_IMPULSE_DISTANCE, 0.0f, false);
+        HitResult hitResult = player.pick(MAX_IMPULSE_DISTANCE, 0.0f, false);
 
         // Only proceed if we hit a block
         if (hitResult.getType() != HitResult.Type.BLOCK) {
-            player.sendMessage(Text.literal("No block in range. Point at a block and try again."), true);
-            return TypedActionResult.fail(stack);
+            player.displayClientMessage(Component.literal("No block in range. Point at a block and try again."), true);
+            return InteractionResultHolder.fail(stack);
         }
 
         BlockHitResult blockHit = (BlockHitResult) hitResult;
-        Vec3d hitPos = blockHit.getPos();
+        Vec3 hitPos = blockHit.getLocation();
 
         // Find the nearest physics grid
         Optional<LocalGrid> nearestGrid = findNearestGrid(world, hitPos);
@@ -68,26 +68,26 @@ public class ImpulseToolItem extends Item implements ILoggingControl {
             LocalGrid grid = nearestGrid.get();
 
             // Apply an impulse toward the hit position
-            applyImpulseToward(grid, hitPos, player.isSneaking() ? DEFAULT_IMPULSE_STRENGTH * 3 : DEFAULT_IMPULSE_STRENGTH);
+            applyImpulseToward(grid, hitPos, player.isShiftKeyDown() ? DEFAULT_IMPULSE_STRENGTH * 3 : DEFAULT_IMPULSE_STRENGTH);
 
             // Notify the player
-            player.sendMessage(Text.literal("Applied impulse to grid!"), true);
-            return TypedActionResult.success(stack);
+            player.displayClientMessage(Component.literal("Applied impulse to grid!"), true);
+            return InteractionResultHolder.success(stack);
         } else {
-            player.sendMessage(Text.literal("No physics grids found nearby."), true);
-            return TypedActionResult.fail(stack);
+            player.displayClientMessage(Component.literal("No physics grids found nearby."), true);
+            return InteractionResultHolder.fail(stack);
         }
     }
 
     /**
      * Finds the nearest LocalGrid to a given position.
      */
-    private Optional<LocalGrid> findNearestGrid(World world, Vec3d position) {
-        if (!(world instanceof ServerWorld)) {
+    private Optional<LocalGrid> findNearestGrid(Level world, Vec3 position) {
+        if (!(world instanceof ServerLevel)) {
             return Optional.empty();
         }
 
-        ServerWorld serverWorld = (ServerWorld) world;
+        ServerLevel serverWorld = (ServerLevel) world;
         PhysicsEngine engine = engineManager.getEngine(serverWorld);
 
         if (engine == null) {
@@ -117,7 +117,7 @@ public class ImpulseToolItem extends Item implements ILoggingControl {
     /**
      * Applies an impulse to a grid, pulling it toward the specified position.
      */
-    private void applyImpulseToward(LocalGrid grid, Vec3d targetPos, float strength) {
+    private void applyImpulseToward(LocalGrid grid, Vec3 targetPos, float strength) {
         RigidBody body = grid.getRigidBody();
         if (body == null) return;
 
@@ -148,7 +148,7 @@ public class ImpulseToolItem extends Item implements ILoggingControl {
     }
 
     @Override
-    public Multimap<EntityAttribute, EntityAttributeModifier> getAttributeModifiers(ItemStack stack, EquipmentSlot slot) {
+    public Multimap<Attribute, AttributeModifier> getAttributeModifiers(ItemStack stack, EquipmentSlot slot) {
         return super.getAttributeModifiers(stack, slot);
     }
 

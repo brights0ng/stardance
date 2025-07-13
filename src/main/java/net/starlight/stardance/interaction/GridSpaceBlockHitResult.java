@@ -1,9 +1,9 @@
 package net.starlight.stardance.interaction;
 
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.utils.TransformationAPI;
 
@@ -16,8 +16,8 @@ import net.starlight.stardance.utils.TransformationAPI;
 public class GridSpaceBlockHitResult extends BlockHitResult implements GridSpaceHitResult {
     private final LocalGrid grid;
     private final BlockHitResult originalHitResult;
-    private final Vec3d worldPos;
-    private final Vec3d gridSpacePos;
+    private final Vec3 worldPos;
+    private final Vec3 gridSpacePos;
     private final BlockPos gridSpaceBlockPos;
     private final TransformationAPI.GridSpaceTransformResult transformResult;
     
@@ -32,15 +32,15 @@ public class GridSpaceBlockHitResult extends BlockHitResult implements GridSpace
         // Call super constructor with GridSpace coordinates
         super(
             transformResult.gridSpaceVec,           // Use GridSpace position for the hit
-            originalHitResult.getSide(),            // Keep original face direction
+            originalHitResult.getDirection(),            // Keep original face direction
             transformResult.gridSpacePos,           // Use GridSpace block position
-            originalHitResult.isInsideBlock()       // Keep original inside block flag
+            originalHitResult.isInside()       // Keep original inside block flag
         );
         
         this.originalHitResult = originalHitResult;
         this.transformResult = transformResult;
         this.grid = transformResult.grid;
-        this.worldPos = originalHitResult.getPos();
+        this.worldPos = originalHitResult.getLocation();
         this.gridSpacePos = transformResult.gridSpaceVec;
         this.gridSpaceBlockPos = transformResult.gridSpacePos;
     }
@@ -51,12 +51,12 @@ public class GridSpaceBlockHitResult extends BlockHitResult implements GridSpace
     }
     
     @Override
-    public Vec3d getWorldPos() {
+    public Vec3 getWorldPos() {
         return worldPos;
     }
     
     @Override
-    public Vec3d getGridSpacePos() {
+    public Vec3 getGridSpacePos() {
         return gridSpacePos;
     }
     
@@ -89,9 +89,9 @@ public class GridSpaceBlockHitResult extends BlockHitResult implements GridSpace
     public BlockHitResult toWorldHitResult() {
         return new BlockHitResult(
             worldPos,
-            originalHitResult.getSide(),
+            originalHitResult.getDirection(),
             originalHitResult.getBlockPos(),
-            originalHitResult.isInsideBlock()
+            originalHitResult.isInside()
         );
     }
     
@@ -102,15 +102,15 @@ public class GridSpaceBlockHitResult extends BlockHitResult implements GridSpace
     public BlockHitResult toGridSpaceHitResult() {
         return new BlockHitResult(
             gridSpacePos,
-            originalHitResult.getSide(),
+            originalHitResult.getDirection(),
             gridSpaceBlockPos,
-            originalHitResult.isInsideBlock()
+            originalHitResult.isInside()
         );
     }
     
     @Override
     public String toString() {
         return String.format("GridSpaceBlockHitResult{grid=%s, world=%s, gridSpace=%s, face=%s}", 
-            grid.getGridId(), worldPos, gridSpaceBlockPos, getSide());
+            grid.getGridId(), worldPos, gridSpaceBlockPos, getDirection());
     }
 }

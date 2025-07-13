@@ -1,7 +1,7 @@
 package net.starlight.stardance.utils;
 
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 
 import java.util.ArrayList;
@@ -55,14 +55,14 @@ public class TransformationTestUtils implements ILoggingControl {
     private static TestResult testBasicTransformation(LocalGrid grid) {
         try {
             // Test known positions
-            Vec3d[] testPositions = {
-                new Vec3d(0, 0, 0),           // Origin
-                new Vec3d(1, 1, 1),           // Positive
-                new Vec3d(-1, -1, -1),        // Negative
-                new Vec3d(0.5, 0.5, 0.5),     // Fractional
+            Vec3[] testPositions = {
+                new Vec3(0, 0, 0),           // Origin
+                new Vec3(1, 1, 1),           // Positive
+                new Vec3(-1, -1, -1),        // Negative
+                new Vec3(0.5, 0.5, 0.5),     // Fractional
             };
             
-            for (Vec3d worldPos : testPositions) {
+            for (Vec3 worldPos : testPositions) {
                 // Test world -> GridSpace transformation
                 var transform = TransformationAPI.getInstance().worldToGridSpace(worldPos, grid.getWorld());
                 
@@ -95,16 +95,16 @@ public class TransformationTestUtils implements ILoggingControl {
      */
     private static TestResult testRoundTripAccuracy(LocalGrid grid) {
         try {
-            Vec3d[] testPositions = {
-                new Vec3d(0, 64, 0),
-                new Vec3d(10, 70, 5),
-                new Vec3d(-5, 60, -10),
+            Vec3[] testPositions = {
+                new Vec3(0, 64, 0),
+                new Vec3(10, 70, 5),
+                new Vec3(-5, 60, -10),
             };
             
             double maxError = 0.0;
             double errorThreshold = 0.001; // 1mm tolerance
             
-            for (Vec3d originalPos : testPositions) {
+            for (Vec3 originalPos : testPositions) {
                 // World -> GridSpace
                 var transform = TransformationAPI.getInstance().worldToGridSpace(originalPos, grid.getWorld());
                 
@@ -112,7 +112,7 @@ public class TransformationTestUtils implements ILoggingControl {
                     var result = transform.get();
                     
                     // GridSpace -> World  
-                    Vec3d backToWorld = TransformationAPI.getInstance().gridSpaceToWorld(result.gridSpacePos, result.grid);
+                    Vec3 backToWorld = TransformationAPI.getInstance().gridSpaceToWorld(result.gridSpacePos, result.grid);
                     
                     // Calculate error
                     double error = originalPos.distanceTo(backToWorld);
@@ -140,16 +140,16 @@ public class TransformationTestUtils implements ILoggingControl {
     private static TestResult testEdgeCases(LocalGrid grid) {
         try {
             // Test positions that might cause issues
-            Vec3d[] edgeCases = {
-                new Vec3d(Double.MAX_VALUE, 0, 0),           // Extreme values
-                new Vec3d(0, Double.MAX_VALUE, 0),
-                new Vec3d(0, 0, Double.MAX_VALUE),
-                new Vec3d(Double.NaN, 0, 0),                 // NaN values
-                new Vec3d(0, Double.NaN, 0),
-                new Vec3d(Double.POSITIVE_INFINITY, 0, 0),   // Infinity values
+            Vec3[] edgeCases = {
+                new Vec3(Double.MAX_VALUE, 0, 0),           // Extreme values
+                new Vec3(0, Double.MAX_VALUE, 0),
+                new Vec3(0, 0, Double.MAX_VALUE),
+                new Vec3(Double.NaN, 0, 0),                 // NaN values
+                new Vec3(0, Double.NaN, 0),
+                new Vec3(Double.POSITIVE_INFINITY, 0, 0),   // Infinity values
             };
             
-            for (Vec3d edgeCase : edgeCases) {
+            for (Vec3 edgeCase : edgeCases) {
                 try {
                     var transform = TransformationAPI.getInstance().worldToGridSpace(edgeCase, grid.getWorld());
                     // Should either work or gracefully fail, not crash
@@ -175,7 +175,7 @@ public class TransformationTestUtils implements ILoggingControl {
     private static TestResult testPerformance(LocalGrid grid) {
         try {
             int iterations = 1000;
-            Vec3d testPos = new Vec3d(5, 65, 5);
+            Vec3 testPos = new Vec3(5, 65, 5);
             
             long startTime = System.nanoTime();
             

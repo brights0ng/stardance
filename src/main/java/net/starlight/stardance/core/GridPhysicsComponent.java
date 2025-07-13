@@ -8,12 +8,12 @@ import com.bulletphysics.dynamics.RigidBody;
 import com.bulletphysics.dynamics.RigidBodyConstructionInfo;
 import com.bulletphysics.linearmath.DefaultMotionState;
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.starlight.stardance.physics.SubchunkCoordinates;
 import net.starlight.stardance.utils.SLogger;
 import org.joml.Vector3i;
@@ -112,7 +112,7 @@ class GridPhysicsComponent {
         if (rigidBody == null) return;
 
         // Get the current server tick
-        long currentTick = grid.getWorld().getTime();
+        long currentTick = grid.getWorld().getGameTime();
 
         // Skip if we've already updated this tick
         if (currentTick == lastUpdateTick) {
@@ -275,10 +275,10 @@ class GridPhysicsComponent {
      * @param gridLocalPoint Point in grid-local coordinates
      * @return Point in world coordinates
      */
-    public Vec3d gridLocalToWorld(javax.vecmath.Vector3d gridLocalPoint) {
+    public Vec3 gridLocalToWorld(javax.vecmath.Vector3d gridLocalPoint) {
         if (rigidBody == null) {
             // No physics body - return point as-is (shouldn't happen in normal use)
-            return new Vec3d(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
+            return new Vec3(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
         }
 
         try {
@@ -296,11 +296,11 @@ class GridPhysicsComponent {
             // Apply transform (NOT inverse - this goes grid → world)
             physicsTransform.transform(adjustedPoint);
 
-            return new Vec3d(adjustedPoint.x, adjustedPoint.y, adjustedPoint.z);
+            return new Vec3(adjustedPoint.x, adjustedPoint.y, adjustedPoint.z);
 
         } catch (Exception e) {
             SLogger.log(grid, "Error transforming grid-local to world: " + e.getMessage());
-            return new Vec3d(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
+            return new Vec3(gridLocalPoint.x, gridLocalPoint.y, gridLocalPoint.z);
         }
     }
 
@@ -622,11 +622,11 @@ class GridPhysicsComponent {
         try {
             // Check if the block is a full cube using Minecraft's own method
             // This returns true for blocks like stone, dirt, etc.
-            return Block.isShapeFullCube(state.getOutlineShape(grid.getWorld(), BlockPos.ORIGIN));
+            return Block.isShapeFullBlock(state.getShape(grid.getWorld(), BlockPos.ZERO));
         } catch (Exception e) {
             // Fallback if the method above fails
-            VoxelShape shape = state.getCollisionShape(grid.getWorld(), BlockPos.ORIGIN);
-            Box bounds = shape.getBoundingBox();
+            VoxelShape shape = state.getCollisionShape(grid.getWorld(), BlockPos.ZERO);
+            AABB bounds = shape.bounds();
 
             // Check if bounds are close enough to a full 1x1x1 cube
             // Using a small epsilon to allow for minor precision differences
@@ -651,7 +651,7 @@ class GridPhysicsComponent {
      * Creates a collision shape from a BlockState's VoxelShape.
      */
     private CollisionShape createShapeFromState(BlockState state) {
-        VoxelShape voxelShape = state.getCollisionShape(grid.getWorld(), BlockPos.ORIGIN);
+        VoxelShape voxelShape = state.getCollisionShape(grid.getWorld(), BlockPos.ZERO);
 
         if (voxelShape.isEmpty()) {
             return null; // No collision
@@ -662,7 +662,7 @@ class GridPhysicsComponent {
 
         // Extract each box from the VoxelShape
         final boolean[] anyBoxes = {false};
-        voxelShape.forEachBox((minX, minY, minZ, maxX, maxY, maxZ) -> {
+        voxelShape.forAllBoxes((minX, minY, minZ, maxX, maxY, maxZ) -> {
             // Convert from Minecraft's 0-1 scale to our half-extents (0-0.5)
             float hx = (float)(maxX - minX) / 2.0f;
             float hy = (float)(maxY - minY) / 2.0f;

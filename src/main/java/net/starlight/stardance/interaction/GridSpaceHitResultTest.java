@@ -1,11 +1,11 @@
 package net.starlight.stardance.interaction;
 
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.utils.SLogger;
 
@@ -18,7 +18,7 @@ public class GridSpaceHitResultTest {
     /**
      * Test method - call this from a command or debug item.
      */
-    public static void testHitResultSystem(ServerWorld world) {
+    public static void testHitResultSystem(ServerLevel world) {
         SLogger.log("GridSpaceHitResultTest", "=== TESTING GRIDSPACE HITRESULT SYSTEM ===");
         
         // Test 1: Create a vanilla hit result and try to convert it
@@ -33,15 +33,15 @@ public class GridSpaceHitResultTest {
         SLogger.log("GridSpaceHitResultTest", "=== TESTING COMPLETE ===");
     }
     
-    private static void testVanillaToGridSpaceConversion(ServerWorld world) {
+    private static void testVanillaToGridSpaceConversion(ServerLevel world) {
         SLogger.log("GridSpaceHitResultTest", "Test 1: Vanilla to GridSpace conversion...");
         
         // Create a test vanilla BlockHitResult
-        Vec3d testWorldPos = new Vec3d(100, 64, 100); // Adjust to where you have a grid
+        Vec3 testWorldPos = new Vec3(100, 64, 100); // Adjust to where you have a grid
         BlockPos testBlockPos = new BlockPos((int)testWorldPos.x, (int)testWorldPos.y, (int)testWorldPos.z);
         BlockHitResult vanillaHit = new BlockHitResult(testWorldPos, Direction.UP, testBlockPos, false);
         
-        SLogger.log("GridSpaceHitResultTest", "Created vanilla hit result: " + vanillaHit.getPos());
+        SLogger.log("GridSpaceHitResultTest", "Created vanilla hit result: " + vanillaHit.getLocation());
         
         // Try to convert to GridSpace
         HitResult converted = GridSpaceHitResultFactory.convertToGridSpaceHitResult(vanillaHit, world);
@@ -52,19 +52,19 @@ public class GridSpaceHitResultTest {
             
             // Test conversion back to vanilla
             HitResult backToVanilla = GridSpaceHitResultFactory.convertToVanillaHitResult(converted, false);
-            SLogger.log("GridSpaceHitResultTest", "✅ Converted back to vanilla: " + backToVanilla.getPos());
+            SLogger.log("GridSpaceHitResultTest", "✅ Converted back to vanilla: " + backToVanilla.getLocation());
             
         } else {
             SLogger.log("GridSpaceHitResultTest", "ℹ️ No grid found at test position - this is normal if no grid exists there");
         }
     }
     
-    private static void testHitResultDetection(ServerWorld world) {
+    private static void testHitResultDetection(ServerLevel world) {
         SLogger.log("GridSpaceHitResultTest", "Test 2: Hit result detection...");
         
         // Create test hit results
-        Vec3d testPos = new Vec3d(50, 64, 50);
-        BlockHitResult vanillaHit = new BlockHitResult(testPos, Direction.UP, BlockPos.ofFloored(testPos), false);
+        Vec3 testPos = new Vec3(50, 64, 50);
+        BlockHitResult vanillaHit = new BlockHitResult(testPos, Direction.UP, BlockPos.containing(testPos), false);
         
         // Test detection methods
         boolean isGridSpace = GridSpaceHitResultFactory.isGridSpaceHitResult(vanillaHit);
@@ -86,15 +86,15 @@ public class GridSpaceHitResultTest {
         }
     }
     
-    private static void testCoordinateExtraction(ServerWorld world) {
+    private static void testCoordinateExtraction(ServerLevel world) {
         SLogger.log("GridSpaceHitResultTest", "Test 3: Coordinate extraction...");
         
-        Vec3d testPos = new Vec3d(75, 64, 75);
-        BlockHitResult vanillaHit = new BlockHitResult(testPos, Direction.UP, BlockPos.ofFloored(testPos), false);
+        Vec3 testPos = new Vec3(75, 64, 75);
+        BlockHitResult vanillaHit = new BlockHitResult(testPos, Direction.UP, BlockPos.containing(testPos), false);
         
         // Test coordinate extraction from vanilla hit
-        Vec3d worldCoords = GridSpaceHitResultFactory.getWorldCoordinates(vanillaHit);
-        Vec3d gridSpaceCoords = GridSpaceHitResultFactory.getGridSpaceCoordinates(vanillaHit);
+        Vec3 worldCoords = GridSpaceHitResultFactory.getWorldCoordinates(vanillaHit);
+        Vec3 gridSpaceCoords = GridSpaceHitResultFactory.getGridSpaceCoordinates(vanillaHit);
         
         SLogger.log("GridSpaceHitResultTest", "Vanilla hit coordinates:");
         SLogger.log("GridSpaceHitResultTest", "  World: " + worldCoords);
@@ -103,9 +103,9 @@ public class GridSpaceHitResultTest {
         // Convert and test coordinate extraction from GridSpace hit
         HitResult converted = GridSpaceHitResultFactory.convertToGridSpaceHitResult(vanillaHit, world);
         if (converted != vanillaHit) {
-            Vec3d convertedWorldCoords = GridSpaceHitResultFactory.getWorldCoordinates(converted);
-            Vec3d convertedGridSpaceCoords = GridSpaceHitResultFactory.getGridSpaceCoordinates(converted);
-            Vec3d blockCoords = GridSpaceHitResultFactory.getGridSpaceBlockCoordinates(converted);
+            Vec3 convertedWorldCoords = GridSpaceHitResultFactory.getWorldCoordinates(converted);
+            Vec3 convertedGridSpaceCoords = GridSpaceHitResultFactory.getGridSpaceCoordinates(converted);
+            Vec3 blockCoords = GridSpaceHitResultFactory.getGridSpaceBlockCoordinates(converted);
             
             SLogger.log("GridSpaceHitResultTest", "GridSpace hit coordinates:");
             SLogger.log("GridSpaceHitResultTest", "  World: " + convertedWorldCoords);
@@ -117,7 +117,7 @@ public class GridSpaceHitResultTest {
     /**
      * Test with a specific grid to verify the system works with known grids.
      */
-    public static void testWithSpecificGrid(LocalGrid grid, Vec3d worldPos) {
+    public static void testWithSpecificGrid(LocalGrid grid, Vec3 worldPos) {
         SLogger.log("GridSpaceHitResultTest", "=== TESTING WITH SPECIFIC GRID ===");
         SLogger.log("GridSpaceHitResultTest", "Grid: " + grid.getGridId());
         SLogger.log("GridSpaceHitResultTest", "World position: " + worldPos);
@@ -126,7 +126,7 @@ public class GridSpaceHitResultTest {
         BlockHitResult vanillaHit = new BlockHitResult(
             worldPos, 
             Direction.UP, 
-            BlockPos.ofFloored(worldPos), 
+            BlockPos.containing(worldPos), 
             false
         );
         
@@ -144,7 +144,7 @@ public class GridSpaceHitResultTest {
             }
             
             // Test coordinate accuracy
-            Vec3d worldCoords = GridSpaceHitResultFactory.getWorldCoordinates(converted);
+            Vec3 worldCoords = GridSpaceHitResultFactory.getWorldCoordinates(converted);
             double error = worldPos.distanceTo(worldCoords);
             
             SLogger.log("GridSpaceHitResultTest", "Coordinate accuracy: " + error + " blocks error");

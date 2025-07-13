@@ -8,20 +8,9 @@ import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.ItemStack;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.TypedActionResult;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.World;
+import net.minecraft.server.level.ServerLevel;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.item.ModItems;
 import net.starlight.stardance.physics.EngineManager;
@@ -51,8 +40,8 @@ public class Stardance implements ModInitializer {
 	public static MinecraftServer serverInstance;
 
 	// Packet identifiers - using standard Java constants
-	public static final Identifier TRANSFORM_UPDATE_PACKET_ID = new Identifier(MOD_ID, "transform_update");
-	public static final Identifier PHYSICS_STATE_UPDATE_PACKET_ID = new Identifier(MOD_ID, "physics_state_update");
+	public static final ResourceLocation TRANSFORM_UPDATE_PACKET_ID = new ResourceLocation(MOD_ID, "transform_update");
+	public static final ResourceLocation PHYSICS_STATE_UPDATE_PACKET_ID = new ResourceLocation(MOD_ID, "physics_state_update");
 
 	// --------------------------------------------------
 	// MOD INITIALIZATION
@@ -78,7 +67,7 @@ public class Stardance implements ModInitializer {
 
 		// Handle loading data for each loaded server world
 		ServerWorldEvents.LOAD.register((server, world) -> {
-			if (!world.isClient()) {
+			if (!world.isClientSide()) {
 				loadServerWorld(server, world);
 			}
 		});
@@ -105,7 +94,7 @@ public class Stardance implements ModInitializer {
 	 * Handles loading / reloading a given server world, e.g. setting up
 	 * or refreshing physics engine state for that world.
 	 */
-	private void loadServerWorld(MinecraftServer server, ServerWorld world) {
+	private void loadServerWorld(MinecraftServer server, ServerLevel world) {
 		engineManager.load(world);
 	}
 }

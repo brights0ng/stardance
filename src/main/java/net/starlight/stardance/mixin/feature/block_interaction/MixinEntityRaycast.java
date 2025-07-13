@@ -3,14 +3,11 @@ package net.starlight.stardance.mixin.feature.block_interaction;
 import com.bulletphysics.dynamics.RigidBody;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.entity.Entity;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
-import net.minecraft.world.World;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.BlockHitResult;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.debug.InteractionDebugManager;
 import net.starlight.stardance.mixinducks.OriginalCrosshairProvider;
@@ -49,16 +46,16 @@ public class MixinEntityRaycast implements ILoggingControl {
      * public HitResult raycast(double maxDistance, float tickDelta, boolean includeFluids)
      */
     @WrapOperation(
-            method = "raycast(DFZ)Lnet/minecraft/util/hit/HitResult;",
+            method = "pick(DFZ)Lnet/minecraft/world/phys/HitResult;", // raycast -> pick
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/world/World;raycast(Lnet/minecraft/world/RaycastContext;)Lnet/minecraft/util/hit/BlockHitResult;")
+                    target = "Lnet/minecraft/world/level/Level;clip(Lnet/minecraft/world/level/ClipContext;)Lnet/minecraft/world/phys/BlockHitResult;") // World->Level, RaycastContext->ClipContext
     )
-    private BlockHitResult interceptWorldRaycast(World world, RaycastContext context, Operation<BlockHitResult> original) {
+    private BlockHitResult interceptWorldRaycast(Level world, ClipContext context, Operation<BlockHitResult> original) {
         try {
             // Store original crosshair target (client-side only)
             BlockHitResult vanillaResult = original.call(world, context);
-            if (world.isClient) {
-                MinecraftClient client = MinecraftClient.getInstance();
+            if (world.isClientSide) {
+                Minecraft client = Minecraft.getInstance();
                 if (client instanceof OriginalCrosshairProvider) {
                     ((OriginalCrosshairProvider) client).stardance$setOriginalCrosshairTarget(vanillaResult);
                 }

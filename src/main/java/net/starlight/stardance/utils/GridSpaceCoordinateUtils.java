@@ -1,8 +1,8 @@
 package net.starlight.stardance.utils;
 
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.Level;
 import net.starlight.stardance.core.LocalGrid;
 
 import java.util.ArrayList;
@@ -26,7 +26,7 @@ public class GridSpaceCoordinateUtils implements ILoggingControl {
      * 
      * This is the VS2 approach to handle "hit block face vs actual block" issues.
      */
-    public static Optional<GridSpaceBlockResult> findActualGridBlock(BlockPos gridSpacePos, World world) {
+    public static Optional<GridSpaceBlockResult> findActualGridBlock(BlockPos gridSpacePos, Level world) {
         try {
             // 1. First try the exact position
             Optional<TransformationAPI.GridSpaceTransformResult> directResult = 
@@ -81,7 +81,7 @@ public class GridSpaceCoordinateUtils implements ILoggingControl {
         List<BlockPos> adjacent = new ArrayList<>();
         
         for (Direction direction : Direction.values()) {
-            adjacent.add(center.offset(direction));
+            adjacent.add(center.relative(direction));
         }
         
         return adjacent;

@@ -1,14 +1,14 @@
 package net.starlight.stardance.network;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
 import javax.vecmath.Quat4f;
 import javax.vecmath.Vector3f;
+import com.mojang.blaze3d.vertex.PoseStack;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -153,7 +153,7 @@ public class ClientGridManager implements ILoggingControl {
     /**
      * ENHANCED: Renders all registered grids with comprehensive logging.
      */
-    public void renderGrids(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+    public void renderGrids(PoseStack matrices, MultiBufferSource vertexConsumers,
                             float partialTick, long currentWorldTick) {
         renderCallCount++;
 

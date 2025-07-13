@@ -1,9 +1,9 @@
 package net.starlight.stardance.interaction;
 
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.utils.TransformationAPI;
 
@@ -14,8 +14,8 @@ import net.starlight.stardance.utils.TransformationAPI;
 public class GridSpaceEntityHitResult extends EntityHitResult implements GridSpaceHitResult {
     private final LocalGrid grid;
     private final EntityHitResult originalHitResult;
-    private final Vec3d worldPos;
-    private final Vec3d gridSpacePos;
+    private final Vec3 worldPos;
+    private final Vec3 gridSpacePos;
     private final BlockPos gridSpaceBlockPos;
     
     /**
@@ -34,7 +34,7 @@ public class GridSpaceEntityHitResult extends EntityHitResult implements GridSpa
         
         this.originalHitResult = originalHitResult;
         this.grid = transformResult.grid;
-        this.worldPos = originalHitResult.getPos();
+        this.worldPos = originalHitResult.getLocation();
         this.gridSpacePos = transformResult.gridSpaceVec;
         this.gridSpaceBlockPos = transformResult.gridSpacePos;
     }
@@ -45,12 +45,12 @@ public class GridSpaceEntityHitResult extends EntityHitResult implements GridSpa
     }
     
     @Override
-    public Vec3d getWorldPos() {
+    public Vec3 getWorldPos() {
         return worldPos;
     }
     
     @Override
-    public Vec3d getGridSpacePos() {
+    public Vec3 getGridSpacePos() {
         return gridSpacePos;
     }
     
@@ -92,6 +92,6 @@ public class GridSpaceEntityHitResult extends EntityHitResult implements GridSpa
     @Override
     public String toString() {
         return String.format("GridSpaceEntityHitResult{grid=%s, entity=%s, world=%s, gridSpace=%s}", 
-            grid.getGridId(), getEntity().getEntityName(), worldPos, gridSpacePos);
+            grid.getGridId(), getEntity().getScoreboardName(), worldPos, gridSpacePos);
     }
 }

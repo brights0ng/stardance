@@ -1,10 +1,10 @@
 package net.starlight.stardance.physics.entity;
 
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.physics.entity.ContactDetector.SweepResult;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
@@ -58,13 +58,13 @@ public class CollisionResolver implements ILoggingControl {
      * @param result The sweep test result with collision information
      * @return A modified movement vector that avoids the collision
      */
-    public Vec3d resolvePreMovementCollision(Entity entity, Vec3d movement, SweepResult result) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+    public Vec3 resolvePreMovementCollision(Entity entity, Vec3 movement, SweepResult result) {
+        boolean isPlayer = entity instanceof Player;
 
         // Special case: if the time of impact is very small, entity may be already colliding
         if (result.getTimeOfImpact() < 0.01f) {
             // We're already colliding at the start, handle penetration
-            Vec3d resolvedMovement = resolvePenetration(entity, movement, result);
+            Vec3 resolvedMovement = resolvePenetration(entity, movement, result);
 
             if (DEBUG_RESOLUTION && isPlayer) {
                 SLogger.log(this, String.format(
@@ -79,7 +79,7 @@ public class CollisionResolver implements ILoggingControl {
 
         // Calculate safe movement up to collision point with safety margin
         double safetyMargin = 0.01;
-        Vec3d safeMovement = result.getSafePosition(Vec3d.ZERO, movement, safetyMargin);
+        Vec3 safeMovement = result.getSafePosition(Vec3.ZERO, movement, safetyMargin);
 
         // Calculate remaining time after collision
         float remainingTime = 1.0f - result.getTimeOfImpact();
@@ -98,10 +98,10 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // Get sliding movement for the remainder of the time
-        Vec3d slidingMovement = calculateSlidingMovement(movement, result, remainingTime);
+        Vec3 slidingMovement = calculateSlidingMovement(movement, result, remainingTime);
 
         // Combine safe movement and sliding movement
-        Vec3d combinedMovement = safeMovement.add(slidingMovement);
+        Vec3 combinedMovement = safeMovement.add(slidingMovement);
 
         if (DEBUG_RESOLUTION && isPlayer) {
             SLogger.log(this, String.format(
@@ -124,13 +124,13 @@ public class CollisionResolver implements ILoggingControl {
      * @param result The sweep test result with collision information
      * @return A modified movement vector that resolves the penetration
      */
-    private Vec3d resolvePenetration(Entity entity, Vec3d movement, SweepResult result) {
+    private Vec3 resolvePenetration(Entity entity, Vec3 movement, SweepResult result) {
         // Get collision normal
         Vector3f normal = result.getHitNormal();
 
         // Create separation vector along normal
         float separationDistance = 0.05f; // Push out slightly more to avoid sticking
-        Vec3d separationVector = new Vec3d(
+        Vec3 separationVector = new Vec3(
                 normal.x * separationDistance,
                 normal.y * separationDistance,
                 normal.z * separationDistance
@@ -145,7 +145,7 @@ public class CollisionResolver implements ILoggingControl {
         double dot = movementVec.dot(normalVec);
 
         // Only project if moving into the surface
-        Vec3d projectedMovement = movement;
+        Vec3 projectedMovement = movement;
         if (dot < 0) {
             // Remove normal component from movement
             Vector3d normalComponent = new Vector3d(normalVec);
@@ -153,17 +153,17 @@ public class CollisionResolver implements ILoggingControl {
             movementVec.sub(normalComponent);
 
             // Convert back to Vec3d
-            projectedMovement = new Vec3d(movementVec.x, movementVec.y, movementVec.z);
+            projectedMovement = new Vec3(movementVec.x, movementVec.y, movementVec.z);
         }
 
         // Scale projected movement to avoid overshooting
-        projectedMovement = projectedMovement.multiply(0.8); // Reduce speed slightly
+        projectedMovement = projectedMovement.scale(0.8); // Reduce speed slightly
 
         // Combine separation and projected movement
-        Vec3d resolvedMovement = separationVector.add(projectedMovement);
+        Vec3 resolvedMovement = separationVector.add(projectedMovement);
 
         // Log for debugging
-        if (DEBUG_RESOLUTION && entity instanceof PlayerEntity) {
+        if (DEBUG_RESOLUTION && entity instanceof Player) {
             SLogger.log(this, String.format(
                     "Penetration resolved - normal=(%.2f, %.2f, %.2f), separation=(%.2f, %.2f, %.2f), final=(%.2f, %.2f, %.2f)",
                     normal.x, normal.y, normal.z,
@@ -183,10 +183,10 @@ public class CollisionResolver implements ILoggingControl {
      * @param remainingTime Fraction of original movement time remaining
      * @return A sliding movement vector with appropriate magnitude
      */
-    private Vec3d calculateSlidingMovement(Vec3d originalMovement, SweepResult result, float remainingTime) {
+    private Vec3 calculateSlidingMovement(Vec3 originalMovement, SweepResult result, float remainingTime) {
         // Skip if no remaining time
         if (remainingTime <= 0.01f) {
-            return Vec3d.ZERO;
+            return Vec3.ZERO;
         }
 
         // Get the collision normal
@@ -202,7 +202,7 @@ public class CollisionResolver implements ILoggingControl {
         // Original length for reference
         double originalLength = movementVec.length();
         if (originalLength < 0.0001) {
-            return Vec3d.ZERO;
+            return Vec3.ZERO;
         }
 
         Vector3d normalVec = new Vector3d(normal.x, normal.y, normal.z);
@@ -225,7 +225,7 @@ public class CollisionResolver implements ILoggingControl {
 
             // If tangential component is too small, just return zero
             if (tangentialLength < 0.0001) {
-                return Vec3d.ZERO;
+                return Vec3.ZERO;
             }
 
             // Normalize the tangential component
@@ -244,7 +244,7 @@ public class CollisionResolver implements ILoggingControl {
             tangentialComponent.scale(slideMagnitude);
 
             // Convert back to Vec3d
-            return new Vec3d(
+            return new Vec3(
                     tangentialComponent.x,
                     tangentialComponent.y,
                     tangentialComponent.z
@@ -252,7 +252,7 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // If not moving into surface, allow full remaining movement but with friction
-        return originalMovement.multiply(remainingTime * SLIDE_FRICTION);
+        return originalMovement.scale(remainingTime * SLIDE_FRICTION);
     }
 
     /**
@@ -263,7 +263,7 @@ public class CollisionResolver implements ILoggingControl {
      * @param contacts List of contacts detected after movement
      */
     public void resolvePostMovementCollision(Entity entity, List<Contact> contacts) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+        boolean isPlayer = entity instanceof Player;
 
         if (contacts.isEmpty()) {
             return;
@@ -314,7 +314,7 @@ public class CollisionResolver implements ILoggingControl {
      * @param contact The contact information
      */
     private void handlePositionCorrection(Entity entity, Contact contact) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+        boolean isPlayer = entity instanceof Player;
 
         // Skip if penetration is too small
         float penetration = contact.getPenetrationDepth();
@@ -335,9 +335,9 @@ public class CollisionResolver implements ILoggingControl {
         correctionVec.scale(correction);
 
         // Apply correction to entity position
-        Vec3d correctionVecMC = new Vec3d(correctionVec.x, correctionVec.y, correctionVec.z);
-        Vec3d oldPos = entity.getPos();
-        Vec3d newPos = oldPos.subtract(correctionVecMC);
+        Vec3 correctionVecMC = new Vec3(correctionVec.x, correctionVec.y, correctionVec.z);
+        Vec3 oldPos = entity.position();
+        Vec3 newPos = oldPos.subtract(correctionVecMC);
 
         // For lateral collisions (side contacts), use a higher safety margin
         double safetyMargin = normal.y < 0.2f ? 0.01 : 0.001;
@@ -349,14 +349,14 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // Ensure new position doesn't collide with world blocks
-        Vec3d safePos = ensureSafePosition(entity, oldPos, newPos);
+        Vec3 safePos = ensureSafePosition(entity, oldPos, newPos);
 
         // Skip if position didn't actually change
         if (safePos.equals(oldPos)) {
             // If we can't move to the safe position, try a more aggressive correction
             // Scale up by 1.5x and try again
             correctionVec.scale(1.5f);
-            newPos = oldPos.add(new Vec3d(correctionVec.x, correctionVec.y, correctionVec.z));
+            newPos = oldPos.add(new Vec3(correctionVec.x, correctionVec.y, correctionVec.z));
 
             // Try again with the more aggressive correction
             safePos = ensureSafePosition(entity, oldPos, newPos);
@@ -373,7 +373,7 @@ public class CollisionResolver implements ILoggingControl {
 //        entity.refreshPositionAndAngles(safePos.x, safePos.y, safePos.z, entity.getYaw(), entity.getPitch());
 
         // Also directly update the position to ensure it takes effect immediately
-        entity.setPosition(safePos);
+        entity.setPos(safePos);
 
         // Force update the entity's bounding box
         entity.getBoundingBox();
@@ -402,20 +402,20 @@ public class CollisionResolver implements ILoggingControl {
      * @param newPos The proposed new position
      * @return A safe position
      */
-    private Vec3d ensureSafePosition(Entity entity, Vec3d oldPos, Vec3d newPos) {
+    private Vec3 ensureSafePosition(Entity entity, Vec3 oldPos, Vec3 newPos) {
         // Calculate movement vector
-        Vec3d movement = newPos.subtract(oldPos);
+        Vec3 movement = newPos.subtract(oldPos);
 
         // Skip if movement is negligible
-        if (movement.lengthSquared() < 1e-6) {
+        if (movement.lengthSqr() < 1e-6) {
             return oldPos;
         }
 
-        boolean isPlayer = entity instanceof PlayerEntity;
+        boolean isPlayer = entity instanceof Player;
 
         // Try with full movement first
-        Box fullBox = entity.getBoundingBox().offset(movement);
-        if (entity.getWorld().isSpaceEmpty(entity, fullBox)) {
+        AABB fullBox = entity.getBoundingBox().move(movement);
+        if (entity.level().noCollision(entity, fullBox)) {
             return newPos;
         }
 
@@ -428,10 +428,10 @@ public class CollisionResolver implements ILoggingControl {
         // Use binary search to efficiently find the maximum safe movement
         for (int i = 0; i < 8; i++) { // 8 iterations should give sufficient precision
             currentScale = (minScale + maxScale) / 2.0;
-            Vec3d scaledMovement = movement.multiply(currentScale);
-            Box scaledBox = entity.getBoundingBox().offset(scaledMovement);
+            Vec3 scaledMovement = movement.scale(currentScale);
+            AABB scaledBox = entity.getBoundingBox().move(scaledMovement);
 
-            if (entity.getWorld().isSpaceEmpty(entity, scaledBox)) {
+            if (entity.level().noCollision(entity, scaledBox)) {
                 // This scale is safe, try a larger one
                 bestSafeScale = currentScale;
                 minScale = currentScale;
@@ -443,7 +443,7 @@ public class CollisionResolver implements ILoggingControl {
 
         // If we found a safe scale
         if (bestSafeScale > 0.001) {
-            Vec3d safePos = oldPos.add(movement.multiply(bestSafeScale));
+            Vec3 safePos = oldPos.add(movement.scale(bestSafeScale));
 
             if (DEBUG_RESOLUTION && isPlayer) {
                 SLogger.log(this, String.format(
@@ -457,20 +457,20 @@ public class CollisionResolver implements ILoggingControl {
 
         // Try moving in individual axes if combined movement failed
         // This is important for sliding along walls
-        Vec3d xMovement = new Vec3d(movement.x, 0, 0);
-        Box xBox = entity.getBoundingBox().offset(xMovement);
-        boolean xSafe = entity.getWorld().isSpaceEmpty(entity, xBox);
+        Vec3 xMovement = new Vec3(movement.x, 0, 0);
+        AABB xBox = entity.getBoundingBox().move(xMovement);
+        boolean xSafe = entity.level().noCollision(entity, xBox);
 
-        Vec3d yMovement = new Vec3d(0, movement.y, 0);
-        Box yBox = entity.getBoundingBox().offset(yMovement);
-        boolean ySafe = entity.getWorld().isSpaceEmpty(entity, yBox);
+        Vec3 yMovement = new Vec3(0, movement.y, 0);
+        AABB yBox = entity.getBoundingBox().move(yMovement);
+        boolean ySafe = entity.level().noCollision(entity, yBox);
 
-        Vec3d zMovement = new Vec3d(0, 0, movement.z);
-        Box zBox = entity.getBoundingBox().offset(zMovement);
-        boolean zSafe = entity.getWorld().isSpaceEmpty(entity, zBox);
+        Vec3 zMovement = new Vec3(0, 0, movement.z);
+        AABB zBox = entity.getBoundingBox().move(zMovement);
+        boolean zSafe = entity.level().noCollision(entity, zBox);
 
         // Apply the individual movements that are safe
-        Vec3d safePos = oldPos;
+        Vec3 safePos = oldPos;
         if (xSafe) {
             safePos = safePos.add(xMovement);
         }
@@ -496,11 +496,11 @@ public class CollisionResolver implements ILoggingControl {
         if (Math.abs(movement.y) > 0.01) {
             // Try just a small fraction of the Y movement
             double yScale = movement.y > 0 ? 0.2 : 0.1; // Allow more upward than downward
-            Vec3d smallYMovement = new Vec3d(0, movement.y * yScale, 0);
-            Box smallYBox = entity.getBoundingBox().offset(smallYMovement);
+            Vec3 smallYMovement = new Vec3(0, movement.y * yScale, 0);
+            AABB smallYBox = entity.getBoundingBox().move(smallYMovement);
 
-            if (entity.getWorld().isSpaceEmpty(entity, smallYBox)) {
-                Vec3d yOnlyPos = oldPos.add(smallYMovement);
+            if (entity.level().noCollision(entity, smallYBox)) {
+                Vec3 yOnlyPos = oldPos.add(smallYMovement);
 
                 if (DEBUG_RESOLUTION && isPlayer) {
                     SLogger.log(this, String.format(
@@ -528,13 +528,13 @@ public class CollisionResolver implements ILoggingControl {
      * @param contact The contact information
      */
     private void handleVelocityAdjustment(Entity entity, Contact contact) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+        boolean isPlayer = entity instanceof Player;
 
         // Get current velocity
-        Vec3d velocity = entity.getVelocity();
+        Vec3 velocity = entity.getDeltaMovement();
 
         // Early out if velocity is negligible
-        if (velocity.lengthSquared() < 1e-6) {
+        if (velocity.lengthSqr() < 1e-6) {
             return;
         }
 
@@ -551,7 +551,7 @@ public class CollisionResolver implements ILoggingControl {
 
         // Only cancel velocity if moving into the surface
         if (dot < 0) {
-            Vec3d newVelocity;
+            Vec3 newVelocity;
 
             // Calculate reflected velocity (with damping)
             Vector3d normalComponent = new Vector3d(normalVec);
@@ -564,7 +564,7 @@ public class CollisionResolver implements ILoggingControl {
             // For ground contacts, dampen vertical velocity completely
             if (contact.isGroundContact()) {
                 // Set new velocity with zero vertical component
-                newVelocity = new Vec3d(tangentialComponent.x, 0, tangentialComponent.z);
+                newVelocity = new Vec3(tangentialComponent.x, 0, tangentialComponent.z);
             } else {
                 // For side/ceiling contacts, dampen the normal component
                 double restitution = 0.2; // Bounciness factor
@@ -578,11 +578,11 @@ public class CollisionResolver implements ILoggingControl {
                 resultantVelocity.add(reflectionComponent);
 
                 // Convert to Vec3d
-                newVelocity = new Vec3d(resultantVelocity.x, resultantVelocity.y, resultantVelocity.z);
+                newVelocity = new Vec3(resultantVelocity.x, resultantVelocity.y, resultantVelocity.z);
             }
 
             // Apply new velocity
-            entity.setVelocity(newVelocity);
+            entity.setDeltaMovement(newVelocity);
             velocityAdjustmentsApplied++;
 
             // Log velocity adjustment for debugging
@@ -608,7 +608,7 @@ public class CollisionResolver implements ILoggingControl {
      * @param contact The contact with grid information
      */
     private void addGridVelocityInfluence(Entity entity, Contact contact) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+        boolean isPlayer = entity instanceof Player;
 
         // Skip if not a grid contact
         if (!contact.isGridContact()) {
@@ -624,7 +624,7 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // Get current entity velocity
-        Vec3d entityVelocity = entity.getVelocity();
+        Vec3 entityVelocity = entity.getDeltaMovement();
 
         // Calculate influence factor based on contact type
         float influenceFactor = 0.3f; // Default influence
@@ -636,7 +636,7 @@ public class CollisionResolver implements ILoggingControl {
             // Special case: if grid is moving upward and entity is on top,
             // match the grid's vertical velocity to prevent bouncing
             if (gridVelocity.y > 0) {
-                entityVelocity = new Vec3d(
+                entityVelocity = new Vec3(
                         entityVelocity.x,
                         Math.max(entityVelocity.y, gridVelocity.y * 0.9),
                         entityVelocity.z
@@ -645,21 +645,21 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // Apply grid velocity influence
-        Vec3d gridInfluence = new Vec3d(
+        Vec3 gridInfluence = new Vec3(
                 gridVelocity.x * influenceFactor,
                 gridVelocity.y * influenceFactor,
                 gridVelocity.z * influenceFactor
         );
 
         // Add to entity velocity
-        Vec3d newVelocity = entityVelocity.add(gridInfluence);
+        Vec3 newVelocity = entityVelocity.add(gridInfluence);
 
         // Apply new velocity
-        entity.setVelocity(newVelocity);
+        entity.setDeltaMovement(newVelocity);
         velocityAdjustmentsApplied++;
 
         // Log grid influence for debugging
-        if (DEBUG_RESOLUTION && isPlayer && gridInfluence.lengthSquared() > 1e-4) {
+        if (DEBUG_RESOLUTION && isPlayer && gridInfluence.lengthSqr() > 1e-4) {
             SLogger.log(this, String.format(
                     "Player affected by grid velocity - grid=(%.2f, %.2f, %.2f), influence=(%.2f, %.2f, %.2f), result=(%.2f, %.2f, %.2f)",
                     gridVelocity.x, gridVelocity.y, gridVelocity.z,
@@ -675,7 +675,7 @@ public class CollisionResolver implements ILoggingControl {
      */
     private void applyGroundFriction(Entity entity) {
         // Get current velocity
-        Vec3d velocity = entity.getVelocity();
+        Vec3 velocity = entity.getDeltaMovement();
 
         // Skip if not moving horizontally
         if (Math.abs(velocity.x) < 1e-6 && Math.abs(velocity.z) < 1e-6) {
@@ -683,14 +683,14 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // Apply friction to horizontal components
-        Vec3d newVelocity = new Vec3d(
+        Vec3 newVelocity = new Vec3(
                 velocity.x * GROUND_FRICTION,
                 velocity.y,
                 velocity.z * GROUND_FRICTION
         );
 
         // Apply new velocity
-        entity.setVelocity(newVelocity);
+        entity.setDeltaMovement(newVelocity);
     }
 
     /**
@@ -735,8 +735,8 @@ public class CollisionResolver implements ILoggingControl {
      * @param worldMovementLimit Maximum movement to avoid world blocks
      * @return A safe movement vector
      */
-    public Vec3d calculateSafeEntityMovement(Entity entity, Vec3d gridMovement, Vec3d worldMovementLimit) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+    public Vec3 calculateSafeEntityMovement(Entity entity, Vec3 gridMovement, Vec3 worldMovementLimit) {
+        boolean isPlayer = entity instanceof Player;
 
         // Calculate how much the entity would move
         double movementFactor = 1.0;
@@ -747,7 +747,7 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // Calculate initial proposed movement
-        Vec3d proposedMovement = gridMovement.multiply(movementFactor);
+        Vec3 proposedMovement = gridMovement.scale(movementFactor);
 
         // Check if this would exceed world movement limits
         if (worldMovementLimit != null) {
@@ -764,7 +764,7 @@ public class CollisionResolver implements ILoggingControl {
 
             // Apply limit factor if needed
             if (limitFactor < 1.0) {
-                proposedMovement = proposedMovement.multiply(limitFactor * 0.9); // Add small safety margin
+                proposedMovement = proposedMovement.scale(limitFactor * 0.9); // Add small safety margin
 
                 if (DEBUG_RESOLUTION && isPlayer) {
                     SLogger.log(this, String.format(
@@ -776,11 +776,11 @@ public class CollisionResolver implements ILoggingControl {
         }
 
         // Check if the proposed movement would cause a block collision
-        net.minecraft.util.math.Box newBox = entity.getBoundingBox().offset(proposedMovement);
-        boolean wouldCollide = !entity.getWorld().isSpaceEmpty(entity, newBox);
+        net.minecraft.world.phys.AABB newBox = entity.getBoundingBox().move(proposedMovement);
+        boolean wouldCollide = !entity.level().noCollision(entity, newBox);
 
         // If there would be a collision, apply a smaller movement
-        Vec3d safeMovement = wouldCollide ? proposedMovement.multiply(0.5) : proposedMovement;
+        Vec3 safeMovement = wouldCollide ? proposedMovement.scale(0.5) : proposedMovement;
 
         if (wouldCollide && DEBUG_RESOLUTION && isPlayer) {
             SLogger.log(this, String.format(

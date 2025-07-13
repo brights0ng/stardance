@@ -1,16 +1,15 @@
 package net.starlight.stardance.debug;
 
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.gridspace.GridSpaceManager;
 import net.starlight.stardance.gridspace.GridSpaceRegion;
@@ -102,14 +101,14 @@ public class InteractionDebugManager implements ILoggingControl {
      */
     public static int debugTransform(FabricClientCommandSource source, double x, double y, double z) {
         if (source.getWorld() == null) {
-            source.sendFeedback(Text.literal("§cNo world available for transformation test"));
+            source.sendFeedback(Component.literal("§cNo world available for transformation test"));
             return 0;
         }
 
-        Vec3d worldPos = new Vec3d(x, y, z);
+        Vec3 worldPos = new Vec3(x, y, z);
 
-        source.sendFeedback(Text.literal("§6=== COORDINATE TRANSFORMATION TEST ==="));
-        source.sendFeedback(Text.literal("§7Input: §f" + String.format("(%.2f, %.2f, %.2f)", x, y, z)));
+        source.sendFeedback(Component.literal("§6=== COORDINATE TRANSFORMATION TEST ==="));
+        source.sendFeedback(Component.literal("§7Input: §f" + String.format("(%.2f, %.2f, %.2f)", x, y, z)));
 
         try {
             // Test the transformation
@@ -119,35 +118,35 @@ public class InteractionDebugManager implements ILoggingControl {
             if (result.isPresent()) {
                 TransformationAPI.GridSpaceTransformResult transform = result.get();
 
-                source.sendFeedback(Text.literal("§a✓ Grid found: §f" + transform.grid.getGridId()));
-                source.sendFeedback(Text.literal("§7Grid-local: §f" + transform.gridLocalPos));
-                source.sendFeedback(Text.literal("§7GridSpace: §f" + transform.gridSpacePos));
-                source.sendFeedback(Text.literal("§7GridSpace vec: §f" + String.format("(%.2f, %.2f, %.2f)",
+                source.sendFeedback(Component.literal("§a✓ Grid found: §f" + transform.grid.getGridId()));
+                source.sendFeedback(Component.literal("§7Grid-local: §f" + transform.gridLocalPos));
+                source.sendFeedback(Component.literal("§7GridSpace: §f" + transform.gridSpacePos));
+                source.sendFeedback(Component.literal("§7GridSpace vec: §f" + String.format("(%.2f, %.2f, %.2f)",
                         transform.gridSpaceVec.x, transform.gridSpaceVec.y, transform.gridSpaceVec.z)));
 
                 // Test round-trip transformation using CONTINUOUS coordinates for accuracy
-                Vec3d backToWorld = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, transform.grid);
+                Vec3 backToWorld = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, transform.grid);
                 double error = worldPos.distanceTo(backToWorld);
 
-                source.sendFeedback(Text.literal("§7Round-trip: §f" + String.format("(%.2f, %.2f, %.2f)",
+                source.sendFeedback(Component.literal("§7Round-trip: §f" + String.format("(%.2f, %.2f, %.2f)",
                         backToWorld.x, backToWorld.y, backToWorld.z)));
-                source.sendFeedback(Text.literal("§7Error: §f" + String.format("%.6f blocks", error)));
+                source.sendFeedback(Component.literal("§7Error: §f" + String.format("%.6f blocks", error)));
 
                 if (error > 0.001) {
-                    source.sendFeedback(Text.literal("§c⚠ High transformation error!"));
+                    source.sendFeedback(Component.literal("§c⚠ High transformation error!"));
                 }
 
             } else {
-                source.sendFeedback(Text.literal("§7No grid found at this position"));
+                source.sendFeedback(Component.literal("§7No grid found at this position"));
             }
 
         } catch (Exception e) {
-            source.sendFeedback(Text.literal("§cTransformation error: " + e.getMessage()));
+            source.sendFeedback(Component.literal("§cTransformation error: " + e.getMessage()));
             e.printStackTrace();
             return 0;
         }
 
-        source.sendFeedback(Text.literal("§6=== END TRANSFORMATION TEST ==="));
+        source.sendFeedback(Component.literal("§6=== END TRANSFORMATION TEST ==="));
         return 1;
     }
 
@@ -155,9 +154,9 @@ public class InteractionDebugManager implements ILoggingControl {
      * Debugs the player's current raycast target.
      */
     public static int debugRaycast(FabricClientCommandSource source) {
-        PlayerEntity player = source.getPlayer();
+        Player player = source.getPlayer();
         if (player == null) {
-            source.sendFeedback(Text.literal("§cNo player available for raycast test"));
+            source.sendFeedback(Component.literal("§cNo player available for raycast test"));
             return 0;
         }
 
@@ -177,34 +176,34 @@ public class InteractionDebugManager implements ILoggingControl {
             RaycastDebugInfo debugInfo =
                     getDebugInfo(player, 64.0);
 
-            source.sendFeedback(Text.literal("§6=== RAYCAST DEBUG ==="));
-            source.sendFeedback(Text.literal("§7" + debugInfo.description));
+            source.sendFeedback(Component.literal("§6=== RAYCAST DEBUG ==="));
+            source.sendFeedback(Component.literal("§7" + debugInfo.description));
 
             if (debugInfo.worldPos != null) {
-                source.sendFeedback(Text.literal("§7World: §f" + String.format("(%.2f, %.2f, %.2f)",
+                source.sendFeedback(Component.literal("§7World: §f" + String.format("(%.2f, %.2f, %.2f)",
                         debugInfo.worldPos.x, debugInfo.worldPos.y, debugInfo.worldPos.z)));
             }
 
             if (debugInfo.gridSpacePos != null) {
-                source.sendFeedback(Text.literal("§7GridSpace: §f" + String.format("(%.2f, %.2f, %.2f)",
+                source.sendFeedback(Component.literal("§7GridSpace: §f" + String.format("(%.2f, %.2f, %.2f)",
                         debugInfo.gridSpacePos.x, debugInfo.gridSpacePos.y, debugInfo.gridSpacePos.z)));
             }
 
             if (debugInfo.grid != null) {
-                source.sendFeedback(Text.literal("§7Grid: §f" + debugInfo.grid.getGridId()));
-                source.sendFeedback(Text.literal("§7Blocks: §f" + debugInfo.grid.getBlocks().size()));
+                source.sendFeedback(Component.literal("§7Grid: §f" + debugInfo.grid.getGridId()));
+                source.sendFeedback(Component.literal("§7Blocks: §f" + debugInfo.grid.getBlocks().size()));
             }
 
             // Show player eye position and look direction for context
-            Vec3d eyePos = player.getEyePos();
-            Vec3d lookVec = player.getRotationVector();
-            source.sendFeedback(Text.literal("§7Eye: §f" + String.format("(%.2f, %.2f, %.2f)",
+            Vec3 eyePos = player.getEyePosition();
+            Vec3 lookVec = player.getLookAngle();
+            source.sendFeedback(Component.literal("§7Eye: §f" + String.format("(%.2f, %.2f, %.2f)",
                     eyePos.x, eyePos.y, eyePos.z)));
-            source.sendFeedback(Text.literal("§7Look: §f" + String.format("(%.2f, %.2f, %.2f)",
+            source.sendFeedback(Component.literal("§7Look: §f" + String.format("(%.2f, %.2f, %.2f)",
                     lookVec.x, lookVec.y, lookVec.z)));
 
         } catch (Exception e) {
-            source.sendFeedback(Text.literal("§cRaycast debug error: " + e.getMessage()));
+            source.sendFeedback(Component.literal("§cRaycast debug error: " + e.getMessage()));
             e.printStackTrace();
             return 0;
         }
@@ -268,11 +267,11 @@ public class InteractionDebugManager implements ILoggingControl {
      */
     public static class RaycastDebugInfo {
         public final String description;
-        public final Vec3d worldPos;
-        public final Vec3d gridSpacePos;
+        public final Vec3 worldPos;
+        public final Vec3 gridSpacePos;
         public final LocalGrid grid;
 
-        public RaycastDebugInfo(String description, Vec3d worldPos, Vec3d gridSpacePos, LocalGrid grid) {
+        public RaycastDebugInfo(String description, Vec3 worldPos, Vec3 gridSpacePos, LocalGrid grid) {
             this.description = description;
             this.worldPos = worldPos;
             this.gridSpacePos = gridSpacePos;
@@ -298,7 +297,7 @@ public class InteractionDebugManager implements ILoggingControl {
 
     private static InteractionDebugManager.RaycastDebugInfo getDebugInfo(Entity entity, double maxDistance) {
         // Perform raycast
-        HitResult result = entity.raycast(maxDistance, 0.0f, false);
+        HitResult result = entity.pick(maxDistance, 0.0f, false);
 
         if (result.getType() == HitResult.Type.MISS) {
             return new InteractionDebugManager.RaycastDebugInfo("No hit within " + maxDistance + " blocks", null, null, null);
@@ -306,26 +305,26 @@ public class InteractionDebugManager implements ILoggingControl {
 
         if (result instanceof BlockHitResult) {
             BlockHitResult blockResult = (BlockHitResult) result;
-            Vec3d worldPos = blockResult.getPos();
+            Vec3 worldPos = blockResult.getLocation();
             BlockPos blockPos = blockResult.getBlockPos();
 
             // Check if this is a GridSpace coordinate (>= 25M range)
             if (isGridSpaceCoordinate(blockPos)) {
                 // This is already a grid hit! Extract grid information.
-                LocalGrid grid = findGridForGridSpacePosition(blockPos, entity.getWorld());
+                LocalGrid grid = findGridForGridSpacePosition(blockPos, entity.level());
 
                 if (grid != null) {
                     return new InteractionDebugManager.RaycastDebugInfo(
                             "Hit grid block (via physics)",
                             worldPos,
-                            new Vec3d(blockPos.getX(), blockPos.getY(), blockPos.getZ()),
+                            new Vec3(blockPos.getX(), blockPos.getY(), blockPos.getZ()),
                             grid
                     );
                 } else {
                     return new InteractionDebugManager.RaycastDebugInfo(
                             "Hit GridSpace coordinates but no grid found",
                             worldPos,
-                            new Vec3d(blockPos.getX(), blockPos.getY(), blockPos.getZ()),
+                            new Vec3(blockPos.getX(), blockPos.getY(), blockPos.getZ()),
                             null
                     );
                 }
@@ -333,7 +332,7 @@ public class InteractionDebugManager implements ILoggingControl {
 
             // Not GridSpace - try old transformation method for world blocks
             Optional<TransformationAPI.GridSpaceTransformResult> gridTransform =
-                    TransformationAPI.getInstance().worldToGridSpace(worldPos, entity.getWorld());
+                    TransformationAPI.getInstance().worldToGridSpace(worldPos, entity.level());
 
             if (gridTransform.isPresent()) {
                 TransformationAPI.GridSpaceTransformResult transform = gridTransform.get();
@@ -363,7 +362,7 @@ public class InteractionDebugManager implements ILoggingControl {
         return pos.getX() >= 20_000_000 || pos.getZ() >= 20_000_000;
     }
 
-    private static LocalGrid findGridForGridSpacePosition(BlockPos gridSpacePos, World world) {
+    private static LocalGrid findGridForGridSpacePosition(BlockPos gridSpacePos, Level world) {
         try {
             PhysicsEngine engine = engineManager.getEngine(world);
             if (engine == null) return null;
@@ -410,12 +409,12 @@ public class InteractionDebugManager implements ILoggingControl {
 
         // Check adjacent positions (6 directions)
         BlockPos[] adjacentPositions = {
-                centerPos.add(1, 0, 0),   // +X
-                centerPos.add(-1, 0, 0),  // -X
-                centerPos.add(0, 1, 0),   // +Y
-                centerPos.add(0, -1, 0),  // -Y
-                centerPos.add(0, 0, 1),   // +Z
-                centerPos.add(0, 0, -1)   // -Z
+                centerPos.offset(1, 0, 0),   // +X
+                centerPos.offset(-1, 0, 0),  // -X
+                centerPos.offset(0, 1, 0),   // +Y
+                centerPos.offset(0, -1, 0),  // -Y
+                centerPos.offset(0, 0, 1),   // +Z
+                centerPos.offset(0, 0, -1)   // -Z
         };
 
         for (BlockPos adjacentPos : adjacentPositions) {

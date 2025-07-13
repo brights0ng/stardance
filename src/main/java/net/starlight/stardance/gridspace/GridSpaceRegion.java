@@ -1,8 +1,8 @@
 package net.starlight.stardance.gridspace;
 
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.AABB;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
@@ -28,7 +28,7 @@ public class GridSpaceRegion implements ILoggingControl {
     private final BlockPos regionOrigin;
 
     /** Server world this region exists in */
-    private final ServerWorld world;
+    private final ServerLevel world;
 
     /** Size of this region in blocks */
     private final int regionSize;
@@ -54,7 +54,7 @@ public class GridSpaceRegion implements ILoggingControl {
      * Creates a new GridSpace region.
      * Package-private constructor - only GridSpaceManager should create these.
      */
-    GridSpaceRegion(UUID gridId, int regionId, BlockPos regionOrigin, ServerWorld world) {
+    GridSpaceRegion(UUID gridId, int regionId, BlockPos regionOrigin, ServerLevel world) {
         this.gridId = gridId;
         this.regionId = regionId;
         this.regionOrigin = regionOrigin;
@@ -81,7 +81,7 @@ public class GridSpaceRegion implements ILoggingControl {
             throw new IllegalStateException("Cannot use cleaned up GridSpace region");
         }
 
-        return regionOrigin.add(gridLocalPos);
+        return regionOrigin.offset(gridLocalPos);
     }
 
     /**
@@ -158,7 +158,7 @@ public class GridSpaceRegion implements ILoggingControl {
     /**
      * Gets the server world this region exists in.
      */
-    public ServerWorld getWorld() {
+    public ServerLevel getWorld() {
         return world;
     }
 
@@ -172,8 +172,8 @@ public class GridSpaceRegion implements ILoggingControl {
     /**
      * Gets the bounding box of this region in GridSpace coordinates.
      */
-    public Box getRegionBounds() {
-        return new Box(
+    public AABB getRegionBounds() {
+        return new AABB(
                 regionOrigin.getX(), regionOrigin.getY(), regionOrigin.getZ(),
                 regionOrigin.getX() + regionSize, regionOrigin.getY() + regionSize, regionOrigin.getZ() + regionSize
         );

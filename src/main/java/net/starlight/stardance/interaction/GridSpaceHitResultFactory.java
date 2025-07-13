@@ -1,10 +1,10 @@
 package net.starlight.stardance.interaction;
 
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.utils.TransformationAPI;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -34,7 +34,7 @@ public class GridSpaceHitResultFactory implements ILoggingControl {
      * @param world The world context
      * @return GridSpace hit result if targeting a grid, otherwise original hit result
      */
-    public static HitResult convertToGridSpaceHitResult(HitResult hitResult, World world) {
+    public static HitResult convertToGridSpaceHitResult(HitResult hitResult, Level world) {
         if (hitResult == null || world == null) {
             return hitResult;
         }
@@ -47,11 +47,11 @@ public class GridSpaceHitResultFactory implements ILoggingControl {
         try {
             // Try to transform the hit position to GridSpace
             Optional<TransformationAPI.GridSpaceTransformResult> transformResult =
-                    transformAPI.worldToGridSpace(hitResult.getPos(), world);
+                    transformAPI.worldToGridSpace(hitResult.getLocation(), world);
 
             if (transformResult.isPresent()) {
                 SLogger.log("GridSpaceHitResultFactory", "Converting hit result to GridSpace: " +
-                        hitResult.getPos() + " → " + transformResult.get().gridSpacePos);
+                        hitResult.getLocation() + " → " + transformResult.get().gridSpacePos);
 
                 // Create appropriate GridSpace hit result based on type
                 if (hitResult instanceof BlockHitResult blockHit) {
@@ -139,22 +139,22 @@ public class GridSpaceHitResultFactory implements ILoggingControl {
      * Gets the GridSpace coordinates from a hit result, if available.
      * This is where the interaction should actually be executed.
      */
-    public static Vec3d getGridSpaceCoordinates(HitResult hitResult) {
+    public static Vec3 getGridSpaceCoordinates(HitResult hitResult) {
         if (hitResult instanceof GridSpaceHitResult gridSpaceHit) {
             return gridSpaceHit.getGridSpacePos();
         }
-        return hitResult.getPos(); // Fallback to original coordinates
+        return hitResult.getLocation(); // Fallback to original coordinates
     }
 
     /**
      * Gets the world coordinates from a hit result.
      * This is where the player visually sees the interaction.
      */
-    public static Vec3d getWorldCoordinates(HitResult hitResult) {
+    public static Vec3 getWorldCoordinates(HitResult hitResult) {
         if (hitResult instanceof GridSpaceHitResult gridSpaceHit) {
             return gridSpaceHit.getWorldPos();
         }
-        return hitResult.getPos();
+        return hitResult.getLocation();
     }
 
     /**
@@ -176,7 +176,7 @@ public class GridSpaceHitResultFactory implements ILoggingControl {
      * Convenience method: Gets GridSpace coordinates for block interactions.
      * Returns null if not targeting a grid block.
      */
-    public static Vec3d getGridSpaceBlockCoordinates(HitResult hitResult) {
+    public static Vec3 getGridSpaceBlockCoordinates(HitResult hitResult) {
         if (hitResult instanceof GridSpaceBlockHitResult gridSpaceBlockHit) {
             return gridSpaceBlockHit.getGridSpacePos();
         }
@@ -209,7 +209,7 @@ public class GridSpaceHitResultFactory implements ILoggingControl {
             SLogger.log("GridSpaceHitResultFactory", String.format(
                     "[%s] Vanilla hit result - Pos: %s, Type: %s",
                     context,
-                    hitResult.getPos(),
+                    hitResult.getLocation(),
                     hitResult.getType()
             ));
         } else {

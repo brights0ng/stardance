@@ -1,19 +1,23 @@
 package net.starlight.stardance.network;
 
-import net.minecraft.block.BlockRenderType;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.*;
-import net.minecraft.client.render.block.BlockRenderManager;
-import net.minecraft.client.render.model.BakedModel;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.ItemBlockRenderTypes;
+import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.state.BlockState;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 import org.joml.Quaternionf;
 
 import javax.vecmath.Quat4f;
 import javax.vecmath.Vector3f;
+import com.mojang.blaze3d.vertex.PoseStack;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -169,7 +173,7 @@ public class ClientLocalGrid implements ILoggingControl {
     /**
      * CLEAN: Renders with simple, reliable interpolation between known states.
      */
-    public void render(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+    public void render(PoseStack matrices, MultiBufferSource vertexConsumers,
                        float partialTick, long currentWorldTick) {
         renderCallCount++;
 
@@ -197,7 +201,7 @@ public class ClientLocalGrid implements ILoggingControl {
         }
 
         // Render blocks
-        matrices.push();
+        matrices.pushPose();
         try {
             if (usingGridSpaceBlocks) {
                 renderGridSpaceBlocks(matrices, vertexConsumers, blocksToRender, partialTick);
@@ -207,7 +211,7 @@ public class ClientLocalGrid implements ILoggingControl {
         } catch (Exception e) {
             SLogger.log(this, "Error rendering grid " + gridId + ": " + e.getMessage());
         } finally {
-            matrices.pop();
+            matrices.popPose();
         }
     }
 
@@ -281,7 +285,7 @@ public class ClientLocalGrid implements ILoggingControl {
     /**
      * Apply interpolated transform to matrix stack.
      */
-    private void applyGridTransform(MatrixStack matrices, float partialTick) {
+    private void applyGridTransform(PoseStack matrices, float partialTick) {
         // Use interpolated position and rotation
         Vector3f interpPos = getInterpolatedPosition();
         Quaternionf interpRot = getInterpolatedRotation();
@@ -290,7 +294,7 @@ public class ClientLocalGrid implements ILoggingControl {
         matrices.translate(interpPos.x, interpPos.y, interpPos.z);
 
         // Apply rotation
-        matrices.multiply(interpRot);
+        matrices.mulPose(interpRot);
 
         // Apply centroid offset
         if (currentCentroid != null) {
@@ -302,7 +306,7 @@ public class ClientLocalGrid implements ILoggingControl {
     // RENDERING HELPERS (UNCHANGED)
     // ----------------------------------------------
 
-    private void renderGridSpaceBlocks(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+    private void renderGridSpaceBlocks(PoseStack matrices, MultiBufferSource vertexConsumers,
                                        Map<BlockPos, BlockState> gridSpaceBlocks, float partialTick) {
         applyGridTransform(matrices, partialTick);
 
@@ -317,7 +321,7 @@ public class ClientLocalGrid implements ILoggingControl {
         }
     }
 
-    private void renderGridLocalBlocks(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+    private void renderGridLocalBlocks(PoseStack matrices, MultiBufferSource vertexConsumers,
                                        Map<BlockPos, BlockState> gridLocalBlocks, float partialTick) {
         applyGridTransform(matrices, partialTick);
 
@@ -347,28 +351,28 @@ public class ClientLocalGrid implements ILoggingControl {
     /**
      * ENHANCED: Renders a single block with proper lighting, tinting, and render layers.
      */
-    private void renderBlockAt(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+    private void renderBlockAt(PoseStack matrices, MultiBufferSource vertexConsumers,
                                BlockPos gridLocalPos, BlockState state) {
 
         if (state == null || state.isAir()) {
             return;
         }
 
-        MinecraftClient client = MinecraftClient.getInstance();
-        BlockRenderManager blockRenderManager = client.getBlockRenderManager();
+        Minecraft client = Minecraft.getInstance();
+        BlockRenderDispatcher blockRenderManager = client.getBlockRenderer();
 
         if (blockRenderManager == null) {
             return;
         }
 
-        matrices.push();
+        matrices.pushPose();
         try {
             matrices.translate(gridLocalPos.getX(), gridLocalPos.getY(), gridLocalPos.getZ());
 
-            BlockRenderType renderType = state.getRenderType();
+            RenderShape renderType = state.getRenderShape();
 
-            if (renderType == BlockRenderType.MODEL) {
-                BakedModel model = blockRenderManager.getModel(state);
+            if (renderType == RenderShape.MODEL) {
+                BakedModel model = blockRenderManager.getBlockModel(state);
 
                 if (model != null) {
                     // ENHANCED: Calculate proper lighting based on world position
@@ -384,7 +388,7 @@ public class ClientLocalGrid implements ILoggingControl {
                     renderBlockInLayers(matrices, vertexConsumers, state, model,
                             red, green, blue, lightValue);
                 }
-            } else if (renderType == BlockRenderType.ENTITYBLOCK_ANIMATED) {
+            } else if (renderType == RenderShape.ENTITYBLOCK_ANIMATED) {
                 // Handle special block entities (chests, etc.) if needed
                 renderBlockEntity(matrices, vertexConsumers, gridLocalPos, state);
             }
@@ -392,40 +396,40 @@ public class ClientLocalGrid implements ILoggingControl {
         } catch (Exception e) {
             // Silent failure to avoid spam
         } finally {
-            matrices.pop();
+            matrices.popPose();
         }
     }
 
-    private void renderBlockInLayers(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+    private void renderBlockInLayers(PoseStack matrices, MultiBufferSource vertexConsumers,
                                      BlockState state, BakedModel model,
                                      float red, float green, float blue, int lightValue) {
 
-        MinecraftClient client = MinecraftClient.getInstance();
-        BlockRenderManager blockRenderManager = client.getBlockRenderManager();
+        Minecraft client = Minecraft.getInstance();
+        BlockRenderDispatcher blockRenderManager = client.getBlockRenderer();
 
         // Get the correct render layer(s) for this specific block
-        RenderLayer layer = RenderLayers.getBlockLayer(state);
+        RenderType layer = ItemBlockRenderTypes.getChunkRenderType(state);
 
         try {
-            blockRenderManager.getModelRenderer().render(
-                    matrices.peek(),
+            blockRenderManager.getModelRenderer().renderModel(
+                    matrices.last(),
                     vertexConsumers.getBuffer(layer),
                     state,
                     model,
                     red, green, blue,
                     lightValue,
-                    OverlayTexture.DEFAULT_UV
+                    OverlayTexture.NO_OVERLAY
             );
         } catch (Exception e) {
             // Fallback to solid if the correct layer fails
-            blockRenderManager.getModelRenderer().render(
-                    matrices.peek(),
-                    vertexConsumers.getBuffer(RenderLayer.getSolid()),
+            blockRenderManager.getModelRenderer().renderModel(
+                    matrices.last(),
+                    vertexConsumers.getBuffer(RenderType.solid()),
                     state,
                     model,
                     red, green, blue,
                     lightValue,
-                    OverlayTexture.DEFAULT_UV
+                    OverlayTexture.NO_OVERLAY
             );
         }
     }
@@ -434,9 +438,9 @@ public class ClientLocalGrid implements ILoggingControl {
      * ENHANCED: Calculates proper lighting value based on world position.
      */
     private int calculateLightValue(BlockPos gridLocalPos) {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
 
-        if (client.world == null) {
+        if (client.level == null) {
             return 0xF000F0; // Fallback to full bright
         }
 
@@ -449,19 +453,19 @@ public class ClientLocalGrid implements ILoggingControl {
         );
 
         // Get lighting from the world at this position
-        int skyLight = client.world.getLightLevel(net.minecraft.world.LightType.SKY, worldBlockPos);
-        int blockLight = client.world.getLightLevel(net.minecraft.world.LightType.BLOCK, worldBlockPos);
+        int skyLight = client.level.getBrightness(net.minecraft.world.level.LightLayer.SKY, worldBlockPos);
+        int blockLight = client.level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, worldBlockPos);
 
         // Pack lighting values (Minecraft format)
-        return LightmapTextureManager.pack(blockLight, skyLight);    }
+        return LightTexture.pack(blockLight, skyLight);    }
 
     /**
      * ENHANCED: Gets proper block color including biome tinting.
      */
     private int getBlockColor(BlockState state, BlockPos gridLocalPos) {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
 
-        if (client.world == null) {
+        if (client.level == null) {
             return 0xFFFFFF; // White fallback
         }
 
@@ -478,7 +482,7 @@ public class ClientLocalGrid implements ILoggingControl {
             );
 
             // Get color with biome context
-            return blockColors.getColor(state, client.world, worldBlockPos, 0);
+            return blockColors.getColor(state, client.level, worldBlockPos, 0);
 
         } catch (Exception e) {
             return 0xFFFFFF; // White fallback
@@ -488,25 +492,25 @@ public class ClientLocalGrid implements ILoggingControl {
     /**
      * ENHANCED: Handles special block entities (chests, furnaces, etc.).
      */
-    private void renderBlockEntity(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+    private void renderBlockEntity(PoseStack matrices, MultiBufferSource vertexConsumers,
                                    BlockPos gridLocalPos, BlockState state) {
         // For now, just render as a regular block
         // TODO: Implement full block entity rendering if needed
-        MinecraftClient client = MinecraftClient.getInstance();
-        BlockRenderManager blockRenderManager = client.getBlockRenderManager();
-        BakedModel model = blockRenderManager.getModel(state);
+        Minecraft client = Minecraft.getInstance();
+        BlockRenderDispatcher blockRenderManager = client.getBlockRenderer();
+        BakedModel model = blockRenderManager.getBlockModel(state);
 
         if (model != null) {
             int lightValue = calculateLightValue(gridLocalPos);
 
-            blockRenderManager.getModelRenderer().render(
-                    matrices.peek(),
-                    vertexConsumers.getBuffer(RenderLayer.getSolid()),
+            blockRenderManager.getModelRenderer().renderModel(
+                    matrices.last(),
+                    vertexConsumers.getBuffer(RenderType.solid()),
                     state,
                     model,
                     1.0f, 1.0f, 1.0f,
                     lightValue,
-                    OverlayTexture.DEFAULT_UV
+                    OverlayTexture.NO_OVERLAY
             );
         }
     }

@@ -9,10 +9,10 @@ import com.bulletphysics.dynamics.RigidBodyConstructionInfo;
 import com.bulletphysics.linearmath.DefaultMotionState;
 import com.bulletphysics.linearmath.MotionState;
 import com.bulletphysics.linearmath.Transform;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.Stardance;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
@@ -48,7 +48,7 @@ public class EntityProxy implements ILoggingControl {
 
     // State tracking
     private boolean isActive = true;
-    private Box lastBoundingBox;
+    private AABB lastBoundingBox;
 
     // Contact tracking
     private final List<Contact> currentContacts = new ArrayList<>();
@@ -100,10 +100,10 @@ public class EntityProxy implements ILoggingControl {
         // Activate the rigid body initially
         rigidBody.activate(true);
 
-        this.dynamicsWorld = Stardance.engineManager.getEngine(entity.getWorld()).getDynamicsWorld();
+        this.dynamicsWorld = Stardance.engineManager.getEngine(entity.level()).getDynamicsWorld();
 
-        if (DEBUG_PROXY && entity instanceof PlayerEntity) {
-            SLogger.log(this, "Created proxy for player: " + entity.getEntityName());
+        if (DEBUG_PROXY && entity instanceof Player) {
+            SLogger.log(this, "Created proxy for player: " + entity.getScoreboardName());
         }
     }
 
@@ -118,13 +118,13 @@ public class EntityProxy implements ILoggingControl {
             isActive = true;
             dynamicsWorld.addCollisionObject(rigidBody);
 
-            if (DEBUG_PROXY && entity instanceof PlayerEntity) {
-                SLogger.log(this, "Reactivated proxy for player: " + entity.getEntityName());
+            if (DEBUG_PROXY && entity instanceof Player) {
+                SLogger.log(this, "Reactivated proxy for player: " + entity.getScoreboardName());
             }
         }
 
         // Check if bounding box has changed
-        Box currentBoundingBox = entity.getBoundingBox();
+        AABB currentBoundingBox = entity.getBoundingBox();
         boolean boundingBoxChanged = !currentBoundingBox.equals(lastBoundingBox);
 
         // Update transform from entity position
@@ -142,17 +142,17 @@ public class EntityProxy implements ILoggingControl {
             updateCollisionShape(entity);
 
             // Log bounding box change for players
-            if (DEBUG_PROXY && entity instanceof PlayerEntity) {
-                Vec3d oldSize = new Vec3d(
-                        lastBoundingBox.getXLength(),
-                        lastBoundingBox.getYLength(),
-                        lastBoundingBox.getZLength()
+            if (DEBUG_PROXY && entity instanceof Player) {
+                Vec3 oldSize = new Vec3(
+                        lastBoundingBox.getXsize(),
+                        lastBoundingBox.getYsize(),
+                        lastBoundingBox.getZsize()
                 );
 
-                Vec3d newSize = new Vec3d(
-                        currentBoundingBox.getXLength(),
-                        currentBoundingBox.getYLength(),
-                        currentBoundingBox.getZLength()
+                Vec3 newSize = new Vec3(
+                        currentBoundingBox.getXsize(),
+                        currentBoundingBox.getYsize(),
+                        currentBoundingBox.getZsize()
                 );
 
                 SLogger.log(this, String.format(
@@ -168,7 +168,7 @@ public class EntityProxy implements ILoggingControl {
         rigidBody.activate(true);
 
         // Update tracking
-        lastUpdateTime = entity.getWorld().getTime();
+        lastUpdateTime = entity.level().getGameTime();
     }
 
     /**
@@ -179,7 +179,7 @@ public class EntityProxy implements ILoggingControl {
      */
     private void updateTransformFromEntity(Transform transform, Entity entity) {
         // Set position to center of entity's bounding box
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         float x = (float)((box.minX + box.maxX) * 0.5);
         float y = (float)((box.minY + box.maxY) * 0.5);
         float z = (float)((box.minZ + box.maxZ) * 0.5);
@@ -188,7 +188,7 @@ public class EntityProxy implements ILoggingControl {
 
         // Set rotation based on entity's yaw
         // Convert Minecraft's yaw (degrees) to radians
-        float yawRadians = (float)Math.toRadians(-entity.getYaw());
+        float yawRadians = (float)Math.toRadians(-entity.getYRot());
 
         // Create rotation matrix around Y axis
         Quat4f rotation = new Quat4f();
@@ -212,8 +212,8 @@ public class EntityProxy implements ILoggingControl {
         // 3. Update inertia and other properties
 
         // For now, we'll just log
-        if (DEBUG_PROXY && entity instanceof PlayerEntity) {
-            SLogger.log(this, "Entity collision shape updated for player: " + entity.getEntityName());
+        if (DEBUG_PROXY && entity instanceof Player) {
+            SLogger.log(this, "Entity collision shape updated for player: " + entity.getScoreboardName());
         }
     }
 
@@ -227,8 +227,8 @@ public class EntityProxy implements ILoggingControl {
         isActive = false;
         currentContacts.clear();
 
-        if (DEBUG_PROXY && entity instanceof PlayerEntity) {
-            SLogger.log(this, "Disposed proxy for player: " + entity.getEntityName());
+        if (DEBUG_PROXY && entity instanceof Player) {
+            SLogger.log(this, "Disposed proxy for player: " + entity.getScoreboardName());
         }
     }
 
@@ -271,7 +271,7 @@ public class EntityProxy implements ILoggingControl {
      * Gets the last known bounding box.
      * Used to detect when bounding box changes.
      */
-    public Box getLastBoundingBox() {
+    public AABB getLastBoundingBox() {
         return lastBoundingBox;
     }
 
@@ -309,9 +309,9 @@ public class EntityProxy implements ILoggingControl {
     /**
      * Gets the center of the entity in world space.
      */
-    public Vec3d getCenter() {
-        Box box = entity.getBoundingBox();
-        return new Vec3d(
+    public Vec3 getCenter() {
+        AABB box = entity.getBoundingBox();
+        return new Vec3(
                 (box.minX + box.maxX) * 0.5,
                 (box.minY + box.maxY) * 0.5,
                 (box.minZ + box.maxZ) * 0.5
@@ -322,7 +322,7 @@ public class EntityProxy implements ILoggingControl {
      * Gets the half-extents of the entity bounding box.
      */
     public Vector3f getHalfExtents() {
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         return new Vector3f(
                 (float)((box.maxX - box.minX) * 0.5),
                 (float)((box.maxY - box.minY) * 0.5),
@@ -334,7 +334,7 @@ public class EntityProxy implements ILoggingControl {
      * Gets the minimum AABB point.
      */
     public Vector3f getMinimum() {
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         return new Vector3f(
                 (float)box.minX,
                 (float)box.minY,
@@ -346,7 +346,7 @@ public class EntityProxy implements ILoggingControl {
      * Gets the maximum AABB point.
      */
     public Vector3f getMaximum() {
-        Box box = entity.getBoundingBox();
+        AABB box = entity.getBoundingBox();
         return new Vector3f(
                 (float)box.maxX,
                 (float)box.maxY,
@@ -357,7 +357,7 @@ public class EntityProxy implements ILoggingControl {
     @Override
     public String toString() {
         return "EntityProxy{" +
-                "entity=" + entity.getType().getName().getString() +
+                "entity=" + entity.getType().getDescription().getString() +
                 ", active=" + isActive +
                 '}';
     }

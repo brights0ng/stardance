@@ -1,6 +1,6 @@
 package net.starlight.stardance.physics.entity;
 
-import net.minecraft.entity.Entity;
+import net.minecraft.world.entity.Entity;
 import net.starlight.stardance.core.LocalGrid;
 
 import javax.vecmath.Vector3f;

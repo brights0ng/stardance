@@ -1,9 +1,9 @@
 package net.starlight.stardance.debug;
 
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.render.DebugRenderer;
 import net.starlight.stardance.utils.ILoggingControl;
@@ -45,8 +45,8 @@ public class VisualRaycastDebugger implements ILoggingControl {
     /**
      * Visualizes the player's current raycast with full transformation pipeline.
      */
-    public static void visualizePlayerRaycast(PlayerEntity player) {
-        if (player == null || player.getWorld().isClient) {
+    public static void visualizePlayerRaycast(Player player) {
+        if (player == null || player.level().isClientSide) {
             return;
         }
 
@@ -57,9 +57,9 @@ public class VisualRaycastDebugger implements ILoggingControl {
             DebugRenderer.clear();
             
             // Get player's eye position and look direction
-            Vec3d eyePos = player.getEyePos();
-            Vec3d lookDir = player.getRotationVector().normalize();
-            Vec3d rayEnd = eyePos.add(lookDir.multiply(RAY_LENGTH));
+            Vec3 eyePos = player.getEyePosition();
+            Vec3 lookDir = player.getLookAngle().normalize();
+            Vec3 rayEnd = eyePos.add(lookDir.scale(RAY_LENGTH));
             
             // 1. Draw the original ray
             DebugRenderer.addRay(eyePos, lookDir, RAY_LENGTH, COLOR_RAY_ORIGINAL, LINE_WIDTH, VISUAL_DURATION);
@@ -68,14 +68,14 @@ public class VisualRaycastDebugger implements ILoggingControl {
             SLogger.log("VisualRaycastDebugger", "Original ray: " + eyePos + " → " + rayEnd);
             
             // 2. Perform raycast and get hit result
-            HitResult hitResult = player.raycast(RAY_LENGTH, 0.0f, false);
+            HitResult hitResult = player.pick(RAY_LENGTH, 0.0f, false);
             
             if (hitResult.getType() == HitResult.Type.MISS) {
                 SLogger.log("VisualRaycastDebugger", "Ray missed - no hit within " + RAY_LENGTH + " blocks");
                 return;
             }
             
-            Vec3d worldHitPos = hitResult.getPos();
+            Vec3 worldHitPos = hitResult.getLocation();
             
             // 3. Draw world hit point
             DebugRenderer.addPoint(worldHitPos, COLOR_HIT_WORLD, MARKER_SIZE * 1.5f, VISUAL_DURATION);
@@ -85,7 +85,7 @@ public class VisualRaycastDebugger implements ILoggingControl {
             
             // 4. Check for grid transformation
             Optional<TransformationAPI.GridSpaceTransformResult> gridTransform = 
-                TransformationAPI.getInstance().worldToGridSpace(worldHitPos, player.getWorld());
+                TransformationAPI.getInstance().worldToGridSpace(worldHitPos, player.level());
                 
             if (gridTransform.isPresent()) {
                 TransformationAPI.GridSpaceTransformResult transform = gridTransform.get();
@@ -97,7 +97,7 @@ public class VisualRaycastDebugger implements ILoggingControl {
                 visualizeGridBounds(grid);
                 
                 // 6. Show GridSpace coordinates (transform back to world for visualization)
-                Vec3d gridSpaceWorldPos = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, grid);
+                Vec3 gridSpaceWorldPos = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, grid);
                 
                 DebugRenderer.addPoint(gridSpaceWorldPos, COLOR_HIT_GRIDSPACE, MARKER_SIZE * 2.0f, VISUAL_DURATION);
                 DebugRenderer.addCrosshair(gridSpaceWorldPos, COLOR_HIT_GRIDSPACE, MARKER_SIZE * 1.2f, LINE_WIDTH, VISUAL_DURATION);
@@ -138,7 +138,7 @@ public class VisualRaycastDebugger implements ILoggingControl {
             javax.vecmath.Vector3f maxAabb = new javax.vecmath.Vector3f();
             grid.getAABB(minAabb, maxAabb);
             
-            net.minecraft.util.math.Box gridBox = new net.minecraft.util.math.Box(
+            net.minecraft.world.phys.AABB gridBox = new net.minecraft.world.phys.AABB(
                 minAabb.x, minAabb.y, minAabb.z,
                 maxAabb.x, maxAabb.y, maxAabb.z
             );
@@ -157,11 +157,11 @@ public class VisualRaycastDebugger implements ILoggingControl {
     /**
      * Adds detailed information markers at the hit point.
      */
-    private static void addHitPointInfo(Vec3d worldHitPos, TransformationAPI.GridSpaceTransformResult transform, double error) {
+    private static void addHitPointInfo(Vec3 worldHitPos, TransformationAPI.GridSpaceTransformResult transform, double error) {
         // Create a small "info cluster" around the hit point
-        Vec3d offset1 = worldHitPos.add(0.5, 0.5, 0);
-        Vec3d offset2 = worldHitPos.add(-0.5, 0.5, 0);
-        Vec3d offset3 = worldHitPos.add(0, 0.5, 0.5);
+        Vec3 offset1 = worldHitPos.add(0.5, 0.5, 0);
+        Vec3 offset2 = worldHitPos.add(-0.5, 0.5, 0);
+        Vec3 offset3 = worldHitPos.add(0, 0.5, 0.5);
         
         // Different colored points for different info
         DebugRenderer.addPoint(offset1, 0xFF88FF88, MARKER_SIZE * 0.8f, VISUAL_DURATION); // Grid ID
@@ -177,8 +177,8 @@ public class VisualRaycastDebugger implements ILoggingControl {
     /**
      * Quick visualization for debugging specific coordinates.
      */
-    public static void visualizeCoordinateTransformation(Vec3d worldPos, Entity context) {
-        if (context == null || context.getWorld().isClient) {
+    public static void visualizeCoordinateTransformation(Vec3 worldPos, Entity context) {
+        if (context == null || context.level().isClientSide) {
             return;
         }
 
@@ -194,13 +194,13 @@ public class VisualRaycastDebugger implements ILoggingControl {
             
             // Test transformation
             Optional<TransformationAPI.GridSpaceTransformResult> result = 
-                TransformationAPI.getInstance().worldToGridSpace(worldPos, context.getWorld());
+                TransformationAPI.getInstance().worldToGridSpace(worldPos, context.level());
                 
             if (result.isPresent()) {
                 TransformationAPI.GridSpaceTransformResult transform = result.get();
                 
                 // Show GridSpace position (transformed back to world)
-                Vec3d gridSpaceWorldPos = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, transform.grid);
+                Vec3 gridSpaceWorldPos = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, transform.grid);
                 
                 DebugRenderer.addPoint(gridSpaceWorldPos, COLOR_HIT_GRIDSPACE, MARKER_SIZE * 2, VISUAL_DURATION);
                 DebugRenderer.addCrosshair(gridSpaceWorldPos, COLOR_HIT_GRIDSPACE, MARKER_SIZE * 1.5f, LINE_WIDTH, VISUAL_DURATION);
@@ -228,25 +228,25 @@ public class VisualRaycastDebugger implements ILoggingControl {
     /**
      * Creates a visual trajectory showing the complete transformation pipeline.
      */
-    public static void visualizeTransformationPipeline(PlayerEntity player) {
+    public static void visualizeTransformationPipeline(Player player) {
         if (player == null) return;
         
         try {
             // Clear previous visuals
             DebugRenderer.clear();
             
-            Vec3d eyePos = player.getEyePos();
-            Vec3d lookDir = player.getRotationVector().normalize();
+            Vec3 eyePos = player.getEyePosition();
+            Vec3 lookDir = player.getLookAngle().normalize();
             
             // Create a series of points along the ray to show transformation at each point
             int numPoints = 20;
             for (int i = 0; i < numPoints; i++) {
                 double distance = (i + 1) * (RAY_LENGTH / numPoints);
-                Vec3d rayPoint = eyePos.add(lookDir.multiply(distance));
+                Vec3 rayPoint = eyePos.add(lookDir.scale(distance));
                 
                 // Test transformation at this point
                 Optional<TransformationAPI.GridSpaceTransformResult> result = 
-                    TransformationAPI.getInstance().worldToGridSpace(rayPoint, player.getWorld());
+                    TransformationAPI.getInstance().worldToGridSpace(rayPoint, player.level());
                     
                 if (result.isPresent()) {
                     // This point hits a grid - mark it specially

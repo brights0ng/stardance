@@ -1,7 +1,7 @@
 package net.starlight.stardance.gridspace;
 
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
@@ -58,7 +58,7 @@ public class GridSpaceManager implements ILoggingControl {
     // ----------------------------------------------
 
     /** The server world/dimension this manager is responsible for */
-    private final ServerWorld world;
+    private final ServerLevel world;
 
     /** Dimension identifier for logging and debugging */
     private final String dimensionId;
@@ -94,9 +94,9 @@ public class GridSpaceManager implements ILoggingControl {
      *
      * @param world The server world/dimension this manager will handle
      */
-    public GridSpaceManager(ServerWorld world) {
+    public GridSpaceManager(ServerLevel world) {
         this.world = world;
-        this.dimensionId = world.getRegistryKey().getValue().toString();
+        this.dimensionId = world.dimension().location().toString();
 
         SLogger.log(this, "GridSpaceManager initialized for dimension: " + dimensionId);
     }
@@ -259,7 +259,7 @@ public class GridSpaceManager implements ILoggingControl {
     /**
      * Gets the server world this manager is responsible for.
      */
-    public ServerWorld getWorld() {
+    public ServerLevel getWorld() {
         return world;
     }
 

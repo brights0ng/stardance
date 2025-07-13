@@ -1,10 +1,10 @@
 package net.starlight.stardance.physics.entity;
 
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.physics.SubchunkCoordinates;
@@ -34,7 +34,7 @@ public class EntityPhysicsManager implements ILoggingControl {
     private final PhysicsEngine physicsEngine;
 
     // Reference to the server world
-    private final ServerWorld world;
+    private final ServerLevel world;
 
     // Entity tracking
     private final Map<Entity, EntityProxy> entityProxies = new ConcurrentHashMap<>();
@@ -55,7 +55,7 @@ public class EntityPhysicsManager implements ILoggingControl {
     /**
      * Creates a new EntityPhysicsManager for the given engine and world.
      */
-    public EntityPhysicsManager(PhysicsEngine physicsEngine, ServerWorld world) {
+    public EntityPhysicsManager(PhysicsEngine physicsEngine, ServerLevel world) {
         this.physicsEngine = physicsEngine;
         this.world = world;
 
@@ -64,16 +64,16 @@ public class EntityPhysicsManager implements ILoggingControl {
         this.collisionResolver = new CollisionResolver(this);
         this.proxyFactory = new EntityProxyFactory(physicsEngine);
 
-        SLogger.log(this, "EntityPhysicsManager initialized for world: " + world.getRegistryKey().getValue());
+        SLogger.log(this, "EntityPhysicsManager initialized for world: " + world.dimension().location());
     }
 
     /**
      * Updates tracked entities based on active subchunks.
      * Called each tick to refresh entity tracking.
      */
-    public void updateEntitiesInSubchunks(ServerWorld world) {
+    public void updateEntitiesInSubchunks(ServerLevel world) {
         // First check if we need to print stats
-        long currentTime = world.getTime();
+        long currentTime = world.getGameTime();
         if (currentTime - lastStatsTime > 200) { // Every 10 seconds
             printStats();
             lastStatsTime = currentTime;
@@ -104,11 +104,11 @@ public class EntityPhysicsManager implements ILoggingControl {
             int x = coords.x * 16;
             int y = coords.y * 16;
             int z = coords.z * 16;
-            Box subchunkBox = new Box(x, y, z, x + 16, y + 16, z + 16);
+            AABB subchunkBox = new AABB(x, y, z, x + 16, y + 16, z + 16);
 
             // Find entities in this subchunk - only in loaded chunks
-            if (world.isChunkLoaded(x >> 4, z >> 4)) {
-                List<Entity> entitiesInBox = world.getEntitiesByClass(Entity.class, subchunkBox, this::shouldTrackEntity);
+            if (world.hasChunk(x >> 4, z >> 4)) {
+                List<Entity> entitiesInBox = world.getEntitiesOfClass(Entity.class, subchunkBox, this::shouldTrackEntity);
 
                 for (Entity entity : entitiesInBox) {
                     entitiesInSubchunk.add(entity);
@@ -124,7 +124,7 @@ public class EntityPhysicsManager implements ILoggingControl {
         if (DEBUG_TRACKING && !trackedEntities.isEmpty() && currentTime % 20 == 0) {
             int playerCount = 0;
             for (Entity entity : trackedEntities) {
-                if (entity instanceof PlayerEntity) {
+                if (entity instanceof Player) {
                     playerCount++;
                 }
             }
@@ -156,8 +156,8 @@ public class EntityPhysicsManager implements ILoggingControl {
 
                 it.remove();
 
-                if (DEBUG_TRACKING && entity instanceof PlayerEntity) {
-                    SLogger.log(this, "Player removed from tracking: " + entity.getEntityName());
+                if (DEBUG_TRACKING && entity instanceof Player) {
+                    SLogger.log(this, "Player removed from tracking: " + entity.getScoreboardName());
                 }
             }
         }
@@ -189,7 +189,7 @@ public class EntityPhysicsManager implements ILoggingControl {
         }
 
         // Get current tick for frequency checks
-        long currentTick = world.getTime();
+        long currentTick = world.getGameTime();
 
         // Only update proxies for entities that actually need updates
         for (Entity entity : trackedEntities) {
@@ -197,7 +197,7 @@ public class EntityPhysicsManager implements ILoggingControl {
             boolean shouldUpdate = false;
 
             // Players always update frequently
-            if (entity instanceof PlayerEntity) {
+            if (entity instanceof Player) {
                 shouldUpdate = currentTick % PLAYER_UPDATE_FREQUENCY == 0;
             } else {
                 // Other entities update less frequently, staggered by entity ID
@@ -218,20 +218,20 @@ public class EntityPhysicsManager implements ILoggingControl {
      */
     private boolean needsProxyUpdate(Entity entity) {
         // For now, always update players
-        if (entity instanceof PlayerEntity) {
+        if (entity instanceof Player) {
             return true;
         }
 
         // Update if entity is moving
-        if (entity.getVelocity().lengthSquared() > 0.0001) {
+        if (entity.getDeltaMovement().lengthSqr() > 0.0001) {
             return true;
         }
 
         // Update if bounding box has changed
         EntityProxy proxy = entityProxies.get(entity);
         if (proxy != null) {
-            Box currentBox = entity.getBoundingBox();
-            Box lastBox = proxy.getLastBoundingBox();
+            AABB currentBox = entity.getBoundingBox();
+            AABB lastBox = proxy.getLastBoundingBox();
 
             return lastBox != null && !currentBox.equals(lastBox);
         }
@@ -247,8 +247,8 @@ public class EntityPhysicsManager implements ILoggingControl {
     private void startTrackingEntity(Entity entity) {
         trackedEntities.add(entity);
 
-        if (DEBUG_TRACKING && entity instanceof PlayerEntity) {
-            SLogger.log(this, "Started tracking player: " + entity.getEntityName());
+        if (DEBUG_TRACKING && entity instanceof Player) {
+            SLogger.log(this, "Started tracking player: " + entity.getScoreboardName());
         }
     }
 
@@ -263,8 +263,8 @@ public class EntityPhysicsManager implements ILoggingControl {
             proxy = proxyFactory.createProxy(entity);
             entityProxies.put(entity, proxy);
 
-            if (DEBUG_TRACKING && entity instanceof PlayerEntity) {
-                SLogger.log(this, "Created physics proxy for player: " + entity.getEntityName());
+            if (DEBUG_TRACKING && entity instanceof Player) {
+                SLogger.log(this, "Created physics proxy for player: " + entity.getScoreboardName());
             }
         }
         return proxy;
@@ -278,8 +278,8 @@ public class EntityPhysicsManager implements ILoggingControl {
         if (proxy != null) {
             proxy.dispose(); // Clean up any resources
 
-            if (DEBUG_TRACKING && entity instanceof PlayerEntity) {
-                SLogger.log(this, "Stopped tracking player: " + entity.getEntityName());
+            if (DEBUG_TRACKING && entity instanceof Player) {
+                SLogger.log(this, "Stopped tracking player: " + entity.getScoreboardName());
             }
         }
     }
@@ -301,7 +301,7 @@ public class EntityPhysicsManager implements ILoggingControl {
      */
     private boolean shouldTrackEntity(Entity entity) {
         // Skip entities that don't need physics
-        if (entity.isSpectator() || entity.noClip) {
+        if (entity.isSpectator() || entity.noPhysics) {
             return false;
         }
 
@@ -311,7 +311,7 @@ public class EntityPhysicsManager implements ILoggingControl {
         }
 
         // Always track players
-        if (entity instanceof PlayerEntity) {
+        if (entity instanceof Player) {
             return true;
         }
 
@@ -327,11 +327,11 @@ public class EntityPhysicsManager implements ILoggingControl {
      * @param movement The proposed movement vector
      * @return A modified movement vector that avoids grid collisions
      */
-    public Vec3d analyzePotentialMovement(Entity entity, Vec3d movement) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+    public Vec3 analyzePotentialMovement(Entity entity, Vec3 movement) {
+        boolean isPlayer = entity instanceof Player;
 
         // Skip if no significant movement
-        if (movement.lengthSquared() < 1e-6) {
+        if (movement.lengthSqr() < 1e-6) {
             return movement;
         }
 
@@ -364,7 +364,7 @@ public class EntityPhysicsManager implements ILoggingControl {
         }
 
         // Collision detected, calculate adjusted movement
-        Vec3d adjustedMovement = collisionResolver.resolvePreMovementCollision(entity, movement, result);
+        Vec3 adjustedMovement = collisionResolver.resolvePreMovementCollision(entity, movement, result);
 
         if (DEBUG_COLLISIONS && isPlayer && !adjustedMovement.equals(movement)) {
             SLogger.log(this, String.format(
@@ -384,8 +384,8 @@ public class EntityPhysicsManager implements ILoggingControl {
      * @param originalMovement The original movement vector
      * @param actualMovement The actual movement after vanilla collision handling
      */
-    public void processPostMovement(Entity entity, Vec3d originalMovement, Vec3d actualMovement) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+    public void processPostMovement(Entity entity, Vec3 originalMovement, Vec3 actualMovement) {
+        boolean isPlayer = entity instanceof Player;
 
         if (!trackedEntities.contains(entity)) {
             return;
@@ -417,7 +417,7 @@ public class EntityPhysicsManager implements ILoggingControl {
 
         // Update ground state if needed
         boolean onGround = collisionResolver.checkIfOnGround(entity, contacts);
-        if (onGround && !entity.isOnGround()) {
+        if (onGround && !entity.onGround()) {
             // Entity is on ground, set state
             entity.setOnGround(true);
             entity.fallDistance = 0;
@@ -436,8 +436,8 @@ public class EntityPhysicsManager implements ILoggingControl {
      * @param movement The original movement vector
      * @param collisionResult The collision-adjusted movement vector
      */
-    public void adjustVelocityAfterCollision(Entity entity, Vec3d movement, Vec3d collisionResult) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+    public void adjustVelocityAfterCollision(Entity entity, Vec3 movement, Vec3 collisionResult) {
+        boolean isPlayer = entity instanceof Player;
 
         // Calculate collision response vector
         Vector3d collisionResponse = new Vector3d(
@@ -452,10 +452,10 @@ public class EntityPhysicsManager implements ILoggingControl {
         }
 
         // Get current velocity
-        Vec3d currentVelocity = entity.getVelocity();
+        Vec3 currentVelocity = entity.getDeltaMovement();
 
         // Skip if entity isn't moving
-        if (currentVelocity.lengthSquared() < 1e-6) {
+        if (currentVelocity.lengthSqr() < 1e-6) {
             return;
         }
 
@@ -472,14 +472,14 @@ public class EntityPhysicsManager implements ILoggingControl {
         // and only if moving toward the collision (parallelComponent < 0)
         if (parallelComponent < 0) {
             // Calculate new velocity
-            Vec3d newVelocity = new Vec3d(
+            Vec3 newVelocity = new Vec3(
                     currentVelocity.x - normalizedResponse.x * parallelComponent,
                     currentVelocity.y - normalizedResponse.y * parallelComponent,
                     currentVelocity.z - normalizedResponse.z * parallelComponent
             );
 
             // Apply the adjusted velocity
-            entity.setVelocity(newVelocity);
+            entity.setDeltaMovement(newVelocity);
             movementAdjustmentCount++;
 
             if (DEBUG_COLLISIONS && isPlayer) {
@@ -507,8 +507,8 @@ public class EntityPhysicsManager implements ILoggingControl {
         if (!trackedEntities.contains(entity)) {
             startTrackingEntity(entity);
 
-            if (DEBUG_TRACKING && entity instanceof PlayerEntity) {
-                SLogger.log(this, "Force tracking player: " + entity.getEntityName());
+            if (DEBUG_TRACKING && entity instanceof Player) {
+                SLogger.log(this, "Force tracking player: " + entity.getScoreboardName());
             }
         }
     }
@@ -520,10 +520,10 @@ public class EntityPhysicsManager implements ILoggingControl {
      * @param box The box to search for entities
      * @return The number of entities that were added to tracking
      */
-    public int forceTrackNearbyEntities(Box box) {
+    public int forceTrackNearbyEntities(AABB box) {
         int count = 0;
 
-        for (Entity entity : world.getEntitiesByClass(Entity.class, box, this::shouldTrackEntity)) {
+        for (Entity entity : world.getEntitiesOfClass(Entity.class, box, this::shouldTrackEntity)) {
             if (!trackedEntities.contains(entity)) {
                 startTrackingEntity(entity);
                 forcedEntities.add(entity);
@@ -541,7 +541,7 @@ public class EntityPhysicsManager implements ILoggingControl {
      * @param grid The grid that collided with entities
      * @param worldMovementLimit The maximum movement that won't cause entities to intersect world blocks
      */
-    public void handleGridEntityCollisions(LocalGrid grid, Vec3d worldMovementLimit) {
+    public void handleGridEntityCollisions(LocalGrid grid, Vec3 worldMovementLimit) {
         // Get entities that might be affected by this grid
         Vector3f minAabb = new Vector3f();
         Vector3f maxAabb = new Vector3f();
@@ -556,13 +556,13 @@ public class EntityPhysicsManager implements ILoggingControl {
         maxAabb.y += expansion;
         maxAabb.z += expansion;
 
-        Box gridBox = new Box(
+        AABB gridBox = new AABB(
                 minAabb.x, minAabb.y, minAabb.z,
                 maxAabb.x, maxAabb.y, maxAabb.z
         );
 
         // Get all entities in this box
-        List<Entity> potentialCollisions = world.getEntitiesByClass(
+        List<Entity> potentialCollisions = world.getEntitiesOfClass(
                 Entity.class, gridBox, this::shouldTrackEntity);
 
         // Skip if no potential collisions
@@ -593,8 +593,8 @@ public class EntityPhysicsManager implements ILoggingControl {
      * @param worldMovementLimit The maximum safe movement vector
      * @return True if a collision was handled, false otherwise
      */
-    private boolean handleGridToEntityCollision(LocalGrid grid, Entity entity, Vec3d worldMovementLimit) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+    private boolean handleGridToEntityCollision(LocalGrid grid, Entity entity, Vec3 worldMovementLimit) {
+        boolean isPlayer = entity instanceof Player;
 
         // First check if they're actually in contact
         boolean inContact = contactDetector.checkEntityGridContact(entity, grid);
@@ -617,22 +617,22 @@ public class EntityPhysicsManager implements ILoggingControl {
             return false;
         }
 
-        Vec3d gridVelocityVec = new Vec3d(gridVelocity.x, gridVelocity.y, gridVelocity.z);
+        Vec3 gridVelocityVec = new Vec3(gridVelocity.x, gridVelocity.y, gridVelocity.z);
 
         // Calculate a push factor based on relative mass
         float pushFactor = calculatePushFactor(grid, entity);
 
         // Create a safe movement that won't push entity into world blocks
-        Vec3d safeMovement = collisionResolver.calculateSafeEntityMovement(
-                entity, gridVelocityVec.multiply(pushFactor), worldMovementLimit);
+        Vec3 safeMovement = collisionResolver.calculateSafeEntityMovement(
+                entity, gridVelocityVec.scale(pushFactor), worldMovementLimit);
 
         // Skip if no meaningful movement
-        if (safeMovement.lengthSquared() < 1e-6) {
+        if (safeMovement.lengthSqr() < 1e-6) {
             return false;
         }
 
         // Apply the movement to the entity
-        entity.move(net.minecraft.entity.MovementType.SELF, safeMovement);
+        entity.move(net.minecraft.world.entity.MoverType.SELF, safeMovement);
         movementAdjustmentCount++;
 
         // If entity is on the ground relative to this grid, also apply some of the grid's
@@ -656,12 +656,12 @@ public class EntityPhysicsManager implements ILoggingControl {
      */
     private float calculatePushFactor(LocalGrid grid, Entity entity) {
         // Players are harder to push
-        if (entity instanceof PlayerEntity) {
+        if (entity instanceof Player) {
             return 0.8f;
         }
 
         // Living entities are harder to push than non-living
-        if (entity instanceof net.minecraft.entity.LivingEntity) {
+        if (entity instanceof net.minecraft.world.entity.LivingEntity) {
             return 0.9f;
         }
 
@@ -674,7 +674,7 @@ public class EntityPhysicsManager implements ILoggingControl {
      */
     private void applyHorizontalVelocityIfOnGround(Entity entity, LocalGrid grid,
                                                    Vector3f gridVelocity, float factor) {
-        boolean isPlayer = entity instanceof PlayerEntity;
+        boolean isPlayer = entity instanceof Player;
 
         // Skip if no horizontal velocity to apply
         if (Math.abs(gridVelocity.x) < 1e-6 && Math.abs(gridVelocity.z) < 1e-6) {
@@ -682,17 +682,17 @@ public class EntityPhysicsManager implements ILoggingControl {
         }
 
         // Get current entity velocity
-        Vec3d entityVel = entity.getVelocity();
+        Vec3 entityVel = entity.getDeltaMovement();
 
         // Calculate new horizontal velocity influenced by grid
-        Vec3d newVelocity = new Vec3d(
+        Vec3 newVelocity = new Vec3(
                 entityVel.x + gridVelocity.x * factor * 0.8,
                 entityVel.y,
                 entityVel.z + gridVelocity.z * factor * 0.8
         );
 
         // Apply the new velocity
-        entity.setVelocity(newVelocity);
+        entity.setDeltaMovement(newVelocity);
 
         if (DEBUG_COLLISIONS && isPlayer) {
             SLogger.log(this, String.format(
@@ -714,7 +714,7 @@ public class EntityPhysicsManager implements ILoggingControl {
         int proxyCount = entityProxies.size();
 
         for (Entity entity : trackedEntities) {
-            if (entity instanceof PlayerEntity) {
+            if (entity instanceof Player) {
                 playerCount++;
             }
         }

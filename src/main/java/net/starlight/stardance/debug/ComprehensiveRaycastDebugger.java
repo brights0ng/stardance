@@ -2,13 +2,12 @@ package net.starlight.stardance.debug;
 
 import com.bulletphysics.collision.dispatch.CollisionObject;
 import com.bulletphysics.dynamics.RigidBody;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.render.DebugRenderer;
@@ -58,7 +57,7 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
     /**
      * COMPREHENSIVE DEBUG: Visualizes everything about raycast operations.
      */
-    public static void debugComprehensiveRaycast(PlayerEntity player) {
+    public static void debugComprehensiveRaycast(Player player) {
 //        if (player == null || player.getWorld().isClient) {
 //            return;
 //        }
@@ -70,9 +69,9 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
             DebugRenderer.clear();
             
             // Get player raycast info
-            Vec3d eyePos = player.getEyePos();
-            Vec3d lookDir = player.getRotationVector().normalize();
-            Vec3d rayEnd = eyePos.add(lookDir.multiply(RAY_LENGTH));
+            Vec3 eyePos = player.getEyePosition();
+            Vec3 lookDir = player.getLookAngle().normalize();
+            Vec3 rayEnd = eyePos.add(lookDir.scale(RAY_LENGTH));
             
             // 1. VISUALIZE THE PRIMARY RAY
             visualizePrimaryRay(eyePos, lookDir, player);
@@ -103,7 +102,7 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
     /**
      * 1. Visualize the primary ray being cast.
      */
-    private static void visualizePrimaryRay(Vec3d eyePos, Vec3d lookDir, PlayerEntity player) {
+    private static void visualizePrimaryRay(Vec3 eyePos, Vec3 lookDir, Player player) {
         SLogger.log("ComprehensiveRaycastDebugger", "1. VISUALIZING PRIMARY RAY");
         
         // Draw the main ray
@@ -114,20 +113,20 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
         
         // Mark points along the ray every 5 blocks
         for (int i = 5; i <= RAY_LENGTH; i += 5) {
-            Vec3d rayPoint = eyePos.add(lookDir.multiply(i));
+            Vec3 rayPoint = eyePos.add(lookDir.scale(i));
             DebugRenderer.addPoint(rayPoint, COLOR_RAY_PRIMARY, MARKER_SIZE * 0.6f, VISUAL_DURATION);
         }
         
-        SLogger.log("ComprehensiveRaycastDebugger", "Ray: " + eyePos + " → " + eyePos.add(lookDir.multiply(RAY_LENGTH)));
+        SLogger.log("ComprehensiveRaycastDebugger", "Ray: " + eyePos + " → " + eyePos.add(lookDir.scale(RAY_LENGTH)));
     }
 
     /**
      * 2. Visualize all grids in the world.
      */
-    private static void visualizeAllGrids(PlayerEntity player) {
+    private static void visualizeAllGrids(Player player) {
         SLogger.log("ComprehensiveRaycastDebugger", "2. VISUALIZING ALL GRIDS");
         
-        PhysicsEngine engine = engineManager.getEngine(player.getWorld());
+        PhysicsEngine engine = engineManager.getEngine(player.level());
         if (engine == null) {
             SLogger.log("ComprehensiveRaycastDebugger", "❌ No physics engine found!");
             return;
@@ -143,7 +142,7 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
                 Vector3f maxAabb = new Vector3f();
                 grid.getAABB(minAabb, maxAabb);
                 
-                net.minecraft.util.math.Box gridBox = new net.minecraft.util.math.Box(
+                net.minecraft.world.phys.AABB gridBox = new net.minecraft.world.phys.AABB(
                     minAabb.x, minAabb.y, minAabb.z,
                     maxAabb.x, maxAabb.y, maxAabb.z
                 );
@@ -157,7 +156,7 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
                     
                     // Convert grid-local to world position for visualization
                     try {
-                        Vec3d worldBlockPos = grid.gridLocalToWorld(new Vec3d(
+                        Vec3 worldBlockPos = grid.gridLocalToWorld(new Vec3(
                             gridLocalPos.getX() + 0.5,
                             gridLocalPos.getY() + 0.5, 
                             gridLocalPos.getZ() + 0.5
@@ -182,7 +181,7 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
                 if (rigidBody != null) {
                     Vector3f center = new Vector3f();
                     rigidBody.getCenterOfMassPosition(center);
-                    Vec3d centerVec = new Vec3d(center.x, center.y, center.z);
+                    Vec3 centerVec = new Vec3(center.x, center.y, center.z);
                     DebugRenderer.addCrosshair(centerVec, COLOR_PHYSICS_SHAPES, MARKER_SIZE * 1.5f, LINE_WIDTH, VISUAL_DURATION);
                     
                     SLogger.log("ComprehensiveRaycastDebugger", "Grid physics center: " + centerVec);
@@ -199,25 +198,25 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
     /**
      * 3. Visualize vanilla Minecraft raycast.
      */
-    private static void visualizeVanillaRaycast(PlayerEntity player, Vec3d rayStart, Vec3d rayEnd) {
+    private static void visualizeVanillaRaycast(Player player, Vec3 rayStart, Vec3 rayEnd) {
         SLogger.log("ComprehensiveRaycastDebugger", "3. VISUALIZING VANILLA RAYCAST");
         
         try {
             // Create raycast context
-            RaycastContext context = new RaycastContext(
+            ClipContext context = new ClipContext(
                 rayStart, rayEnd, 
-                RaycastContext.ShapeType.OUTLINE, 
-                RaycastContext.FluidHandling.NONE, 
+                ClipContext.Block.OUTLINE, 
+                ClipContext.Fluid.NONE, 
                 player
             );
             
             // Perform vanilla raycast
-            BlockHitResult worldResult = player.getWorld().raycast(context);
+            BlockHitResult worldResult = player.level().clip(context);
             
             if (worldResult.getType() == HitResult.Type.MISS) {
                 SLogger.log("ComprehensiveRaycastDebugger", "Vanilla raycast: MISS");
             } else {
-                Vec3d hitPos = worldResult.getPos();
+                Vec3 hitPos = worldResult.getLocation();
                 BlockPos blockPos = worldResult.getBlockPos();
                 
                 DebugRenderer.addPoint(hitPos, COLOR_WORLD_HIT, MARKER_SIZE * 1.5f, VISUAL_DURATION);
@@ -234,10 +233,10 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
     /**
      * 4. Visualize physics engine raycast.
      */
-    private static void visualizePhysicsRaycast(PlayerEntity player, Vec3d rayStart, Vec3d rayEnd) {
+    private static void visualizePhysicsRaycast(Player player, Vec3 rayStart, Vec3 rayEnd) {
         SLogger.log("ComprehensiveRaycastDebugger", "4. VISUALIZING PHYSICS RAYCAST");
         
-        PhysicsEngine engine = engineManager.getEngine(player.getWorld());
+        PhysicsEngine engine = engineManager.getEngine(player.level());
         if (engine == null) {
             SLogger.log("ComprehensiveRaycastDebugger", "❌ No physics engine for physics raycast");
             return;
@@ -275,7 +274,7 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
     /**
      * Fallback manual physics raycast if the method doesn't exist.
      */
-    private static void tryManualPhysicsRaycast(PhysicsEngine engine, Vec3d rayStart, Vec3d rayEnd) {
+    private static void tryManualPhysicsRaycast(PhysicsEngine engine, Vec3 rayStart, Vec3 rayEnd) {
         try {
             SLogger.log("ComprehensiveRaycastDebugger", "Attempting manual JBullet raycast");
             
@@ -295,7 +294,7 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
             if (callback.hasHit()) {
                 Vector3f hitPoint = new Vector3f();
                 callback.hitPointWorld.get(hitPoint);
-                Vec3d hitPos = new Vec3d(hitPoint.x, hitPoint.y, hitPoint.z);
+                Vec3 hitPos = new Vec3(hitPoint.x, hitPoint.y, hitPoint.z);
                 
                 DebugRenderer.addPoint(hitPos, COLOR_GRID_HIT, MARKER_SIZE * 2.0f, VISUAL_DURATION);
                 DebugRenderer.addCrosshair(hitPos, COLOR_GRID_HIT, MARKER_SIZE * 1.2f, LINE_WIDTH, VISUAL_DURATION);
@@ -324,22 +323,22 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
     /**
      * 5. Visualize coordinate transformations.
      */
-    private static void visualizeCoordinateTransformations(PlayerEntity player, Vec3d rayStart, Vec3d rayEnd) {
+    private static void visualizeCoordinateTransformations(Player player, Vec3 rayStart, Vec3 rayEnd) {
         SLogger.log("ComprehensiveRaycastDebugger", "5. VISUALIZING COORDINATE TRANSFORMATIONS");
         
         // Test coordinate transformations at several points along the ray
         for (int i = 10; i <= RAY_LENGTH; i += 10) {
-            Vec3d testPoint = rayStart.add(rayEnd.subtract(rayStart).normalize().multiply(i));
+            Vec3 testPoint = rayStart.add(rayEnd.subtract(rayStart).normalize().scale(i));
             
             try {
                 Optional<TransformationAPI.GridSpaceTransformResult> result = 
-                    TransformationAPI.getInstance().worldToGridSpace(testPoint, player.getWorld());
+                    TransformationAPI.getInstance().worldToGridSpace(testPoint, player.level());
                     
                 if (result.isPresent()) {
                     TransformationAPI.GridSpaceTransformResult transform = result.get();
                     
                     // Show the transformation with a line
-                    Vec3d gridSpaceWorldPos = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, transform.grid);
+                    Vec3 gridSpaceWorldPos = TransformationAPI.getInstance().gridSpaceToWorld(transform.gridSpaceVec, transform.grid);
                     
                     DebugRenderer.addLine(testPoint, gridSpaceWorldPos, COLOR_COORDINATE_LINES, LINE_WIDTH * 0.5f, VISUAL_DURATION);
                     DebugRenderer.addPoint(testPoint, COLOR_COORDINATE_LINES, MARKER_SIZE * 0.5f, VISUAL_DURATION);
@@ -366,15 +365,15 @@ public class ComprehensiveRaycastDebugger implements ILoggingControl {
     /**
      * 6. Check individual grid blocks along the ray path.
      */
-    private static void visualizeGridBlocksAlongRay(PlayerEntity player, Vec3d rayStart, Vec3d lookDir) {
+    private static void visualizeGridBlocksAlongRay(Player player, Vec3 rayStart, Vec3 lookDir) {
         SLogger.log("ComprehensiveRaycastDebugger", "6. CHECKING GRID BLOCKS ALONG RAY PATH");
         
-        PhysicsEngine engine = engineManager.getEngine(player.getWorld());
+        PhysicsEngine engine = engineManager.getEngine(player.level());
         if (engine == null) return;
         
         // Check every 0.5 blocks along the ray
         for (double distance = 0.5; distance <= RAY_LENGTH; distance += 0.5) {
-            Vec3d checkPoint = rayStart.add(lookDir.multiply(distance));
+            Vec3 checkPoint = rayStart.add(lookDir.scale(distance));
             
             // Check if this point intersects any grid blocks
             for (LocalGrid grid : engine.getGrids()) {
