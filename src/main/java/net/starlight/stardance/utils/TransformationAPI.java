@@ -317,6 +317,146 @@ public class TransformationAPI implements ILoggingControl {
     }
 
     // ===============================================
+    // DISTANCE AND INTERACTION UTILITIES
+    // ===============================================
+
+    /**
+     * VS2-style distance calculation that uses world coordinates for accuracy.
+     * Equivalent to VS2's VSGameUtilsKt.squaredDistanceBetweenInclShips()
+     */
+    public static double squaredDistanceBetweenInclGrids(World world, Vec3d pos1, Vec3d pos2) {
+        try {
+            // Convert positions to world coordinates if they're in GridSpace
+            Vec3d worldPos1 = ensureWorldCoordinates(pos1, world);
+            Vec3d worldPos2 = ensureWorldCoordinates(pos2, world);
+
+            return worldPos1.squaredDistanceTo(worldPos2);
+        } catch (Exception e) {
+            SLogger.log("TransformationAPI", "Error in distance calculation, falling back to direct: " + e.getMessage());
+            return pos1.squaredDistanceTo(pos2); // Fallback to direct calculation
+        }
+    }
+
+    /**
+     * VS2-style coordinate getter that ensures we always return world coordinates.
+     * Equivalent to VS2's VSGameUtilsKt.getWorldCoordinates()
+     */
+    public static Vec3d getWorldCoordinates(World world, BlockPos pos, Vec3d localOffset) {
+        // Check if this position is in GridSpace
+        Optional<GridSpaceTransformResult> gridResult = getInstance().detectGridSpacePosition(pos, world);
+
+        if (gridResult.isPresent()) {
+            GridSpaceTransformResult result = gridResult.get();
+            // Transform GridSpace + offset back to world coordinates
+            Vec3d gridSpacePos = new Vec3d(pos.getX() + localOffset.x, pos.getY() + localOffset.y, pos.getZ() + localOffset.z);
+            return getInstance().gridSpaceToWorld(gridSpacePos, result.grid);
+        }
+
+        // Regular world position
+        return new Vec3d(pos.getX() + localOffset.x, pos.getY() + localOffset.y, pos.getZ() + localOffset.z);
+    }
+
+    /**
+     * Helper to ensure coordinates are in world space, not GridSpace.
+     */
+    private static Vec3d ensureWorldCoordinates(Vec3d pos, World world) {
+        BlockPos blockPos = new BlockPos((int)Math.floor(pos.x), (int)Math.floor(pos.y), (int)Math.floor(pos.z));
+        Vec3d offset = new Vec3d(pos.x - blockPos.getX(), pos.y - blockPos.getY(), pos.z - blockPos.getZ());
+        return getWorldCoordinates(world, blockPos, offset);
+    }
+
+    /**
+     * Detects if a BlockPos is in GridSpace coordinates.
+     * Returns the grid and transformation info if found.
+     */
+    public Optional<GridSpaceTransformResult> detectGridSpacePosition(BlockPos pos, World world) {
+        PhysicsEngine engine = engineManager.getEngine(world);
+        if (engine == null) return Optional.empty();
+
+        // Check all grids to see if this position falls in their GridSpace region
+        for (LocalGrid grid : engine.getGrids()) {
+            if (!grid.isDestroyed() && grid.getGridSpaceRegion().containsGridSpacePosition(pos)) {
+                // Transform back to get all coordinate representations
+                Vec3d gridSpaceVec = new Vec3d(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                Vec3d gridLocalVec = gridSpaceVecToGridLocal(grid, gridSpaceVec);
+                BlockPos gridLocalPos = new BlockPos((int)Math.floor(gridLocalVec.x), (int)Math.floor(gridLocalVec.y), (int)Math.floor(gridLocalVec.z));
+
+                return Optional.of(new GridSpaceTransformResult(grid, pos, gridSpaceVec, gridLocalVec, gridLocalPos));
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    /**
+     * ENHANCED: Find the closest actual block in GridSpace with tolerance.
+     * Fixes physics engine precision issues by snapping to nearest real block.
+     */
+    public Optional<GridSpaceTransformResult> findNearestGridSpaceBlock(BlockPos approximateGridSpacePos, World world, double tolerance) {
+        try {
+            // First try exact match
+            Optional<GridSpaceTransformResult> exactMatch = detectGridSpacePosition(approximateGridSpacePos, world);
+            if (exactMatch.isPresent()) {
+                LocalGrid grid = exactMatch.get().grid;
+                if (grid.hasBlock(exactMatch.get().gridLocalPos)) {
+                    return exactMatch; // Perfect match
+                }
+            }
+
+            // If exact match fails, search nearby positions within tolerance
+            int searchRadius = (int) Math.ceil(tolerance);
+
+            for (int dx = -searchRadius; dx <= searchRadius; dx++) {
+                for (int dy = -searchRadius; dy <= searchRadius; dy++) {
+                    for (int dz = -searchRadius; dz <= searchRadius; dz++) {
+                        if (dx == 0 && dy == 0 && dz == 0) continue; // Already tried exact
+
+                        BlockPos testPos = approximateGridSpacePos.add(dx, dy, dz);
+                        Optional<GridSpaceTransformResult> testResult = detectGridSpacePosition(testPos, world);
+
+                        if (testResult.isPresent()) {
+                            LocalGrid grid = testResult.get().grid;
+                            if (grid.hasBlock(testResult.get().gridLocalPos)) {
+//                                SLogger.log("TransformationAPI", String.format(
+//                                        "Found block at %s (offset by %d,%d,%d from physics pos %s)",
+//                                        testPos, dx, dy, dz, approximateGridSpacePos
+//                                ));
+                                return testResult;
+                            }
+                        }
+                    }
+                }
+            }
+
+            SLogger.log("TransformationAPI", "No blocks found within tolerance of " + approximateGridSpacePos);
+            return Optional.empty();
+
+        } catch (Exception e) {
+            SLogger.log("TransformationAPI", "Error in nearest block search: " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * ENHANCED: Get GridSpace transform result with physics precision fix.
+     * Uses tolerance to handle physics engine coordinate precision issues.
+     */
+    public Optional<GridSpaceTransformResult> worldToGridSpaceWithTolerance(Vec3d worldPos, World world) {
+        // First try the regular transformation
+        Optional<GridSpaceTransformResult> regularResult = worldToGridSpace(worldPos, world);
+        if (regularResult.isPresent()) {
+            LocalGrid grid = regularResult.get().grid;
+            if (grid.hasBlock(regularResult.get().gridLocalPos)) {
+                return regularResult; // Perfect match
+            }
+        }
+
+        // If regular transformation doesn't find a real block, try with tolerance
+        BlockPos approximatePos = new BlockPos((int)Math.floor(worldPos.x), (int)Math.floor(worldPos.y), (int)Math.floor(worldPos.z));
+        return findNearestGridSpaceBlock(approximatePos, world, 2.0); // 2 block tolerance
+    }
+
+    // ===============================================
     // VALIDATION AND DEBUGGING (ENHANCED)
     // ===============================================
 

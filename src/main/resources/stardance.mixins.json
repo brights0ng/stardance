@@ -7,10 +7,16 @@
     "accessors.EntityAccessor",
     "physics.MixinEntity",
     "feature.block_interaction.MixinEntityRaycast",
-    "feature.block_interaction.MixinProjectileUtilSafety"
+    "feature.block_interaction.MixinProjectileUtilSafety",
+    "feature.block_interaction.MixinServerPlayerInteractionManagerBreaking",
+    "feature.block_interaction.MixinServerPlayerInteractionManagerProcess",
+    "feature.block_interaction.MixinServerPlayerInteractionManagerPrecise",
+    "feature.distance_replace.MixinServerPlayerInteractionManagerDistance",
+    "feature.network.MixinServerPlayNetworkHandlerDebug"
   ],
   "client": [
-    "feature.block_interaction.MixinEntityRaycast"
+    "feature.block_interaction.MixinEntityRaycast",
+    "client.MixinClientPlayerInteractionManagerDebug"
   ],
   "server": [
     "feature.block_interaction.MixinEntityRaycast"

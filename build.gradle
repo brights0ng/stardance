@@ -35,7 +35,6 @@ dependencies {
 	// External dependencies - use the 'include' directive to bundle them in your JAR
 	implementation files('libs/jbullet.jar')
 	implementation files('libs/vecmath.jar')
-
 }
 
 processResources {

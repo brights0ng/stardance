@@ -264,7 +264,8 @@ public class PhysicsEngine implements ILoggingControl {
                     worldHitPos,
                     gridSpacePos,
                     hitGrid,
-                    closestHitFraction
+                    closestHitFraction,
+                    hitNormal
             );
         }
 
@@ -281,36 +282,20 @@ public class PhysicsEngine implements ILoggingControl {
         }
     }
 
-    /**
-     * Result of a physics raycast against grids.
-     */
     public static class PhysicsRaycastResult {
         public final Vec3d worldHitPos;
         public final BlockPos gridSpacePos;
         public final LocalGrid grid;
         public final float hitFraction;
+        public final Vector3f hitNormal; // ← ADD THIS
 
-        public PhysicsRaycastResult(Vec3d worldHitPos, BlockPos gridSpacePos, LocalGrid grid, float hitFraction) {
+        public PhysicsRaycastResult(Vec3d worldHitPos, BlockPos gridSpacePos, LocalGrid grid,
+                                    float hitFraction, Vector3f hitNormal) {
             this.worldHitPos = worldHitPos;
             this.gridSpacePos = gridSpacePos;
             this.grid = grid;
             this.hitFraction = hitFraction;
-        }
-
-        /**
-         * Creates a BlockHitResult for vanilla compatibility.
-         */
-        public BlockHitResult createBlockHitResult() {
-            // Create a BlockHitResult using GridSpace coordinates
-            // This makes the hit appear to vanilla code as if it hit a block at GridSpace position
-            Direction hitSide = Direction.UP; // You may want to calculate this from hit normal
-
-            return new BlockHitResult(
-                    worldHitPos,           // Visual hit position (where player sees the hit)
-                    hitSide,
-                    gridSpacePos,          // GridSpace coordinates (where the block actually is)
-                    false
-            );
+            this.hitNormal = hitNormal; // ← ADD THIS
         }
     }
 

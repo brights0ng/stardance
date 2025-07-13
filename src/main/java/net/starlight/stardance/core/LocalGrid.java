@@ -220,6 +220,10 @@ public class LocalGrid implements ILoggingControl {
     // Add these debug fields to LocalGrid
     private static final Map<UUID, TickDebugInfo> debugTracker = new ConcurrentHashMap<>();
 
+    public boolean hasBlock(BlockPos gridLocalPos) {
+        return blocks.containsKey(gridLocalPos);
+    }
+
     private static class TickDebugInfo {
         long lastTickUpdateCall = -1;
         long lastNetworkUpdateCall = -1;
@@ -351,16 +355,17 @@ public class LocalGrid implements ILoggingControl {
      * Now stores blocks in both local storage AND GridSpace.
      *
      * @param localBlock The block to add
+     * @return
      */
-    public void addBlock(LocalBlock localBlock) {
+    public boolean addBlock(LocalBlock localBlock) {
         if (isDestroyed) {
             SLogger.log(this, "Cannot add block to destroyed grid");
-            return;
+            return false;
         }
 
         if (localBlock.getPosition() == null || localBlock.getState() == null) {
             SLogger.log(this, "Cannot add block: null position or state");
-            return;
+            return false;
         }
 
         BlockPos pos = localBlock.getPosition();
@@ -368,7 +373,7 @@ public class LocalGrid implements ILoggingControl {
         // Validate position is within bounds
         if (!isValidGridLocalPosition(pos)) {
             SLogger.log(this, "Cannot add block at " + pos + " - outside valid grid bounds");
-            return;
+            return false;
         }
 
         if (!blocks.containsKey(pos)) {
@@ -384,7 +389,7 @@ public class LocalGrid implements ILoggingControl {
                 // Rollback local storage if GridSpace failed
                 blocks.remove(pos);
                 SLogger.log(this, "Failed to place block in GridSpace, rolling back local placement");
-                return;
+                return gridSpaceSuccess;
             }
 
             // Mark grid as needing updates
@@ -394,7 +399,9 @@ public class LocalGrid implements ILoggingControl {
 
             SLogger.log(this, "Added block " + localBlock.getState().getBlock().getName().getString() +
                     " at grid-local " + pos + " (GridSpace: " + gridLocalToGridSpace(pos) + ")");
+            return true;
         }
+        return false;
     }
 
     /**
@@ -402,10 +409,11 @@ public class LocalGrid implements ILoggingControl {
      * Now removes from both local storage AND GridSpace.
      *
      * @param pos Position of the block to remove
+     * @return
      */
-    public void removeBlock(BlockPos pos) {
+    public boolean removeBlock(BlockPos pos) {
         if (isDestroyed) {
-            return;
+            return false;
         }
 
         LocalBlock removed = blocks.remove(pos);
@@ -416,14 +424,16 @@ public class LocalGrid implements ILoggingControl {
                 // Rollback local removal if GridSpace failed
                 blocks.put(pos, removed);
                 SLogger.log(this, "Failed to remove block from GridSpace, rolling back local removal");
-                return;
+                return gridSpaceSuccess;
             }
 
             markDirty();
             blocksDirty = true;
 
             SLogger.log(this, "Removed block at grid-local " + pos + " (GridSpace: " + gridLocalToGridSpace(pos) + ")");
+            return true;
         }
+        return false;
     }
 
     /**
