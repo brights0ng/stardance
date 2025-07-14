@@ -4,9 +4,6 @@
   "compatibilityLevel": "JAVA_17",
   "plugin": "net.starlight.stardance.mixin.StardanceMixinPlugin",
   "mixins": [
-    "feature.block_interaction.MixinEntityRaycast",
-    "feature.block_interaction.MixinServerGamePacketListenerImpl",
-    "feature.block_interaction.MixinServerPlayerGameMode"
   ],
   "injectors": {
     "defaultRequire": 1

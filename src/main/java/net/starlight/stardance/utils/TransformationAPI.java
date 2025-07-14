@@ -515,7 +515,7 @@ public class TransformationAPI implements ILoggingControl {
 
     @Override
     public boolean stardance$isConsoleLoggingEnabled() {
-        return true;
+        return false;
     }
 
     // ===============================================

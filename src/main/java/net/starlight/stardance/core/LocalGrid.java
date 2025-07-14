@@ -573,6 +573,74 @@ public class LocalGrid implements ILoggingControl {
         }
     }
 
+    /**
+     * Check if a world position is within this grid's physics bounds.
+     * Used for raycast hit detection.
+     */
+    public boolean containsWorldPosition(Vec3 worldPos) {
+        try {
+            RigidBody rigidBody = getPhysicsComponent().getRigidBody();
+
+            // Get the rigid body transform
+            if (rigidBody == null) {
+                return false;
+            }
+
+            // Get the current transform of the rigid body
+            Transform bodyTransform = new Transform();
+            rigidBody.getWorldTransform(bodyTransform);
+
+            // Transform world position to grid-local coordinates
+            Vector3f worldPosBullet = new Vector3f((float)worldPos.x, (float)worldPos.y, (float)worldPos.z);
+
+            // Inverse transform: world -> local
+            Transform inverseTransform = new Transform();
+            bodyTransform.inverse(inverseTransform);
+
+            // Apply the inverse transform (JBullet modifies the vector in-place)
+            Vector3f localPos = new Vector3f(worldPosBullet);
+            inverseTransform.transform(localPos);
+
+            // Check if local position is within our block bounds
+            return isWithinGridBounds(localPos);
+
+        } catch (Exception e) {
+            SLogger.log("LocalGrid", "Error checking world position containment: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Check if local coordinates are within the grid's block bounds.
+     */
+    private boolean isWithinGridBounds(Vector3f localPos) {
+        // Get the bounding box of all blocks in this grid
+        if (blocks.isEmpty()) {
+            return false;
+        }
+
+        // Calculate the min/max bounds of all blocks
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+
+        for (LocalBlock block : blocks.values()) {
+            BlockPos pos = block.getPosition();
+            minX = Math.min(minX, pos.getX());
+            minY = Math.min(minY, pos.getY());
+            minZ = Math.min(minZ, pos.getZ());
+            maxX = Math.max(maxX, pos.getX());
+            maxY = Math.max(maxY, pos.getY());
+            maxZ = Math.max(maxZ, pos.getZ());
+        }
+
+        // Add some padding for collision detection
+        float padding = 0.1f;
+
+        return localPos.x >= (minX - padding) && localPos.x <= (maxX + 1 + padding) &&
+                localPos.y >= (minY - padding) && localPos.y <= (maxY + 1 + padding) &&
+                localPos.z >= (minZ - padding) && localPos.z <= (maxZ + 1 + padding);
+    }
+
     // ----------------------------------------------
     // CLEANUP AND DESTRUCTION
     // ----------------------------------------------
