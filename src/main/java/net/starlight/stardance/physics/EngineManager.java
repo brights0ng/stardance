@@ -12,6 +12,7 @@ import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 import org.joml.Vector3f;
 
+import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -256,5 +257,17 @@ public class EngineManager implements ILoggingControl {
         }
 
         return stats.toString();
+    }
+
+    public ConcurrentHashMap<ServerLevel, PhysicsEngine> getAllEngines() {
+        return engines;
+    }
+
+    /**
+     * Gets all active ServerLevels that have physics engines.
+     * Used by GridSpaceManager for cross-dimension grid lookups.
+     */
+    public Collection<ServerLevel> getAllActiveWorlds() {
+        return engines.keySet();
     }
 }

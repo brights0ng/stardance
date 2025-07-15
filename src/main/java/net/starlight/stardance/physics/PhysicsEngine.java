@@ -195,106 +195,133 @@ public class PhysicsEngine implements ILoggingControl {
     }
 
     /**
-     * VS2-style physics raycast against all grids using JBullet collision detection.
+     * Performs a raycast against all grids in the physics simulation.
+     *
+     * @param rayStart Starting point of the ray in world coordinates
+     * @param rayEnd End point of the ray in world coordinates
+     * @return Optional containing the hit result, or empty if no hit
      */
-    public Optional<PhysicsRaycastResult> raycastGrids(Vec3 rayStart, Vec3 rayEnd) {
-        try {
-            // Convert to JBullet vectors
-            Vector3f bulletStart = new Vector3f((float) rayStart.x, (float) rayStart.y, (float) rayStart.z);
-            Vector3f bulletEnd = new Vector3f((float) rayEnd.x, (float) rayEnd.y, (float) rayEnd.z);
-
-            // Create raycast callback that only hits grids
-            GridRayResultCallback callback = new GridRayResultCallback(bulletStart, bulletEnd);
-
-            // Perform raycast against dynamics world
-            synchronized (getPhysicsLock()) {
-                getDynamicsWorld().rayTest(bulletStart, bulletEnd, callback);
-            }
-
-            if (callback.hasHit()) {
-                return Optional.of(callback.createResult());
-            }
-
+    public Optional<GridRaycastResult> raycastGrids(Vec3 rayStart, Vec3 rayEnd) {
+        if (dynamicsWorld == null) {
+            SLogger.log(this, "Cannot raycast - dynamicsWorld is null");
             return Optional.empty();
+        }
+
+        try {
+            // CRITICAL: Synchronize with physics simulation to prevent race conditions
+            synchronized (physicsLock) {
+                // Convert Minecraft Vec3 to JBullet Vector3f
+                Vector3f jBulletStart = new Vector3f((float) rayStart.x, (float) rayStart.y, (float) rayStart.z);
+                Vector3f jBulletEnd = new Vector3f((float) rayEnd.x, (float) rayEnd.y, (float) rayEnd.z);
+
+                // Create JBullet raycast callback
+                CollisionWorld.ClosestRayResultCallback rayCallback =
+                        new CollisionWorld.ClosestRayResultCallback(jBulletStart, jBulletEnd);
+
+                // Perform the raycast - now thread-safe
+                dynamicsWorld.rayTest(jBulletStart, jBulletEnd, rayCallback);
+
+                // Check if we hit something
+                if (rayCallback.hasHit()) {
+                    // Get the hit information
+                    Vector3f hitPoint = new Vector3f();
+                    rayCallback.hitPointWorld.get(hitPoint);
+
+                    Vector3f hitNormal = new Vector3f();
+                    rayCallback.hitNormalWorld.get(hitNormal);
+
+                    // Get the collision object that was hit
+                    Object userPointer = rayCallback.collisionObject.getUserPointer();
+
+                    // Check if it's one of our grids
+                    if (userPointer instanceof LocalGrid) {
+                        LocalGrid hitGrid = (LocalGrid) userPointer;
+
+                        // Convert hit point back to Minecraft coordinates
+                        Vec3 minecraftHitPoint = new Vec3(hitPoint.x, hitPoint.y, hitPoint.z);
+                        Vec3 minecraftHitNormal = new Vec3(hitNormal.x, hitNormal.y, hitNormal.z);
+
+                        // Create and return the result
+                        GridRaycastResult result = new GridRaycastResult(
+                                hitGrid,
+                                minecraftHitPoint,
+                                minecraftHitNormal,
+                                rayCallback.closestHitFraction
+                        );
+
+                        return Optional.of(result);
+                    }
+                }
+
+                return Optional.empty();
+            }
 
         } catch (Exception e) {
-            SLogger.log("PhysicsEngine", "Error in grid raycast: " + e.getMessage());
+            SLogger.log(this, "Grid raycast failed: " + e.getMessage());
             return Optional.empty();
         }
     }
 
     /**
-     * Custom raycast callback that only hits LocalGrid rigid bodies.
+     * Result of a grid raycast operation.
      */
-    private static class GridRayResultCallback extends CollisionWorld.ClosestRayResultCallback {
+    public static class GridRaycastResult {
+        public final LocalGrid hitGrid;
+        public final Vec3 hitPoint;        // World coordinates
+        public final Vec3 hitNormal;       // World coordinates
+        public final float hitFraction;    // 0.0 to 1.0 along the ray
 
-        public GridRayResultCallback(Vector3f rayFromWorld, Vector3f rayToWorld) {
-            super(rayFromWorld, rayToWorld);
+        public GridRaycastResult(LocalGrid hitGrid, Vec3 hitPoint, Vec3 hitNormal, float hitFraction) {
+            this.hitGrid = hitGrid;
+            this.hitPoint = hitPoint;
+            this.hitNormal = hitNormal;
+            this.hitFraction = hitFraction;
         }
 
-        @Override
-        public float addSingleResult(CollisionWorld.LocalRayResult rayResult, boolean normalInWorldSpace) {
-            // Only process hits against LocalGrid rigid bodies
-            Object userPointer = rayResult.collisionObject.getUserPointer();
-            if (!(userPointer instanceof LocalGrid)) {
-                return 1.0f; // Skip non-grid objects
-            }
-
-            return super.addSingleResult(rayResult, normalInWorldSpace);
+        /**
+         * Gets the distance from ray start to hit point.
+         */
+        public double getDistance(Vec3 rayStart) {
+            return hitPoint.distanceTo(rayStart);
         }
 
-        public PhysicsRaycastResult createResult() {
-            if (!hasHit()) return null;
-
-            Vector3f hitPoint = new Vector3f();
-            hitPointWorld.get(hitPoint);
-
-            Vector3f hitNormal = new Vector3f();
-            hitNormalWorld.get(hitNormal);
-
-            LocalGrid hitGrid = (LocalGrid) collisionObject.getUserPointer();
-
-            // Convert world hit point to GridSpace coordinates
-            Vec3 worldHitPos = new Vec3(hitPoint.x, hitPoint.y, hitPoint.z);
-            BlockPos gridSpacePos = worldToGridSpace(worldHitPos, hitGrid);
-
-            return new PhysicsRaycastResult(
-                    worldHitPos,
-                    gridSpacePos,
-                    hitGrid,
-                    closestHitFraction,
-                    hitNormal
-            );
-        }
-
-        private BlockPos worldToGridSpace(Vec3 worldPos, LocalGrid grid) {
-            // Transform world → grid-local → GridSpace
-            Vector3d worldPoint = new Vector3d(worldPos.x, worldPos.y, worldPos.z);
-            Vector3d gridLocalPoint = grid.worldToGridLocal(worldPoint);
-            BlockPos gridLocalPos = new BlockPos(
-                    (int) Math.floor(gridLocalPoint.x),
-                    (int) Math.floor(gridLocalPoint.y),
-                    (int) Math.floor(gridLocalPoint.z)
-            );
-            return grid.gridLocalToGridSpace(gridLocalPos);
+        /**
+         * Converts the hit point to grid-local coordinates.
+         */
+        public Vec3 getHitPointInGridSpace() {
+            // TODO: Use your TransformationAPI to convert world coords to grid coords
+            return hitGrid.worldToGridSpace(hitPoint);
         }
     }
 
-    public static class PhysicsRaycastResult {
-        public final Vec3 worldHitPos;
-        public final BlockPos gridSpacePos;
-        public final LocalGrid grid;
-        public final float hitFraction;
-        public final Vector3f hitNormal; // ← ADD THIS
+    /**
+     * Gets a list of all active grids in this physics simulation.
+     */
+    public java.util.List<LocalGrid> getActiveGrids() {
+        java.util.List<LocalGrid> grids = new java.util.ArrayList<>();
 
-        public PhysicsRaycastResult(Vec3 worldHitPos, BlockPos gridSpacePos, LocalGrid grid,
-                                    float hitFraction, Vector3f hitNormal) {
-            this.worldHitPos = worldHitPos;
-            this.gridSpacePos = gridSpacePos;
-            this.grid = grid;
-            this.hitFraction = hitFraction;
-            this.hitNormal = hitNormal; // ← ADD THIS
+        if (dynamicsWorld == null) {
+            return grids;
         }
+
+        try {
+            // Iterate through all collision objects in the physics world
+            for (int i = 0; i < dynamicsWorld.getNumCollisionObjects(); i++) {
+                var collisionObject = dynamicsWorld.getCollisionObjectArray().get(i);
+                Object userPointer = collisionObject.getUserPointer();
+
+                if (userPointer instanceof LocalGrid) {
+                    grids.add((LocalGrid) userPointer);
+                }
+            }
+
+            SLogger.log(this, "Found " + grids.size() + " active grids in physics simulation");
+
+        } catch (Exception e) {
+            SLogger.log(this, "Error getting active grids: " + e.getMessage());
+        }
+
+        return grids;
     }
 
     // -------------------------------------------

@@ -224,12 +224,158 @@ public class LocalGrid implements ILoggingControl {
         return blocks.containsKey(gridLocalPos);
     }
 
+    /**
+     * Converts world coordinates to grid-local coordinates using the current physics transform.
+     * This converts from where something appears in the world to its actual position in grid space.
+     *
+     * @param worldVec World coordinates
+     * @return Grid-local coordinates (relative to grid origin)
+     */
+    public Vec3 worldToGridSpace(Vec3 worldVec) {
+        if (physicsComponent == null) {
+            SLogger.log(this, "Cannot convert world to grid - physics component is null");
+            // Fallback: return world coordinates offset by original world position
+            return new Vec3(
+                    worldVec.x - origin.x,
+                    worldVec.y - origin.y,
+                    worldVec.z - origin.z
+            );
+        }
+        Vector3d result = physicsComponent.worldToGridLocal(new Vector3d(worldVec.x,worldVec.y,worldVec.z));
+        return new Vec3(result.x,result.y,result.z);
+    }
+
     private static class TickDebugInfo {
         long lastTickUpdateCall = -1;
         long lastNetworkUpdateCall = -1;
         int tickUpdateCallsThisTick = 0;
         int networkUpdateCallsThisTick = 0;
         long currentTick = -1;
+    }
+
+    /**
+     * Converts GridSpace coordinates to visual world coordinates.
+     * This is the inverse of gridSpaceToWorld - it shows where GridSpace blocks appear.
+     */
+    public Vec3 gridSpaceToWorldSpace(Vec3 gridSpacePos) {
+        // Convert GridSpace position back to grid-local coordinates
+        BlockPos regionOrigin = gridSpaceRegion.getRegionOrigin();
+        Vec3 gridLocalPos = new Vec3(
+                gridSpacePos.x - regionOrigin.getX(),
+                gridSpacePos.y - regionOrigin.getY(),
+                gridSpacePos.z - regionOrigin.getZ()
+        );
+
+        // Convert grid-local to visual world coordinates
+        return gridLocalToWorld(gridLocalPos);
+    }
+
+
+
+    /**
+     * Gets the current world position of this grid.
+     * This reflects the actual physics position, which may differ from the initial origin
+     * if the grid has moved due to physics simulation.
+     *
+     * @return Current world position as Vec3
+     */
+    public Vec3 getWorldPosition() {
+        try {
+            // Try to get current position from physics simulation
+            if (physicsComponent != null && physicsComponent.getRigidBody() != null) {
+                // Get current transform from rigid body
+                Transform currentTransform = new Transform();
+                physicsComponent.getRigidBody().getMotionState().getWorldTransform(currentTransform);
+
+                // Extract position from transform
+                Vector3f currentPos = currentTransform.origin;
+
+                // Convert to Minecraft Vec3
+                return new Vec3(currentPos.x, currentPos.y, currentPos.z);
+            } else {
+                // Fallback to initial origin if physics not available
+                SLogger.log(this, "Physics not available, using initial origin position");
+                return new Vec3(origin.x, origin.y, origin.z);
+            }
+
+        } catch (Exception e) {
+            // Error fallback - use initial origin
+            SLogger.log(this, "Error getting world position, using origin: " + e.getMessage());
+            return new Vec3(origin.x, origin.y, origin.z);
+        }
+    }
+
+    /**
+     * Gets the current world rotation of this grid.
+     *
+     * @return Current rotation as quaternion
+     */
+    public javax.vecmath.Quat4f getWorldRotation() {
+        try {
+            if (physicsComponent != null && physicsComponent.getRigidBody() != null) {
+                Transform currentTransform = new Transform();
+                physicsComponent.getRigidBody().getMotionState().getWorldTransform(currentTransform);
+
+                javax.vecmath.Quat4f rotation = new javax.vecmath.Quat4f();
+                currentTransform.getRotation(rotation);
+                return rotation;
+            } else {
+                // Fallback to initial rotation
+                return new javax.vecmath.Quat4f(rotation);
+            }
+
+        } catch (Exception e) {
+            SLogger.log(this, "Error getting world rotation: " + e.getMessage());
+            return new javax.vecmath.Quat4f(rotation);
+        }
+    }
+
+    /**
+     * Gets the number of blocks currently in this grid.
+     *
+     * @return Number of blocks in the grid
+     */
+    public int getBlockCount() {
+        try {
+            if (gridSpaceBlockManager != null) {
+                return gridSpaceBlockManager.getBlockCount();
+            } else {
+                return 0;
+            }
+        } catch (Exception e) {
+            SLogger.log(this, "Error getting block count: " + e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Gets the block state at the specified grid-local position.
+     * Returns null if no block exists at that position.
+     */
+    public BlockState getBlockState(BlockPos pos) {
+        try {
+            if (gridSpaceBlockManager == null) {
+                SLogger.log(this, "getBlockState: blockManager is null");
+                return null;
+            }
+
+            BlockState block = gridSpaceBlockManager.getBlockState(pos);
+            return block;
+
+        } catch (Exception e) {
+            SLogger.log(this, "getBlockState error at " + pos + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+
+    /**
+     * Gets all blocks in this grid for debugging purposes.
+     */
+    public Map<BlockPos, BlockState> getAllBlocks() {
+        // This depends on how your blockManager stores blocks
+        // Adjust based on your actual implementation
+        return gridSpaceBlockManager.getAllBlocks(); // You might need to implement this in your block manager
     }
 
     /**

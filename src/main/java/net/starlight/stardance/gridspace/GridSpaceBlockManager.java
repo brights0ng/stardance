@@ -5,9 +5,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.starlight.stardance.core.LocalBlock;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -321,5 +323,9 @@ public class GridSpaceBlockManager implements ILoggingControl {
                 ", blockCount=" + placedBlocks.size() +
                 ", shutdown=" + isShutdown +
                 '}';
+    }
+
+    public Map<BlockPos, BlockState> getAllBlocks() {
+        return placedBlocks;
     }
 }

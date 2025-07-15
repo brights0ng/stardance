@@ -3,6 +3,7 @@ package net.starlight.stardance.network;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
@@ -10,6 +11,7 @@ import javax.vecmath.Quat4f;
 import javax.vecmath.Vector3f;
 import com.mojang.blaze3d.vertex.PoseStack;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -244,6 +246,213 @@ public class ClientGridManager implements ILoggingControl {
     public String getDebugStats() {
         return String.format("Grids: %d, State updates: %d, Block updates: %d, Render calls: %d",
                 grids.size(), updateStateCount, updateBlocksCount, renderCallCount);
+    }
+
+    /**
+     * Performs client-side raycast against all managed grids.
+     * This is an approximate raycast using client-side grid data.
+     *
+     * @param rayStart Starting point of the ray in world coordinates
+     * @param rayEnd End point of the ray in world coordinates
+     * @return Optional containing the closest grid hit, or empty if no hit
+     */
+    public Optional<ClientGridRaycastResult> raycastGrids(Vec3 rayStart, Vec3 rayEnd) {
+        if (grids.isEmpty()) {
+            if (verbose) {
+                SLogger.log(this, "Client raycast: No grids to test");
+            }
+            return Optional.empty();
+        }
+
+        SLogger.log(this, "Client raycast: Testing " + grids.size() + " grids");
+
+        ClientGridRaycastResult closestHit = null;
+        double closestDistance = Double.MAX_VALUE;
+
+        for (Map.Entry<UUID, ClientLocalGrid> entry : grids.entrySet()) {
+            UUID gridId = entry.getKey();
+            ClientLocalGrid grid = entry.getValue();
+
+            if (grid == null || !grid.hasValidState()) {
+                continue;
+            }
+
+            // Test raycast against this grid
+            Optional<ClientGridRaycastResult> hit = raycastSingleGrid(grid, rayStart, rayEnd);
+
+            if (hit.isPresent()) {
+                double distance = hit.get().hitPoint.distanceTo(rayStart);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestHit = hit.get();
+                }
+
+                SLogger.log(this, "Client raycast HIT grid " + gridId + " at distance " + distance);
+            }
+        }
+
+        if (closestHit != null) {
+            SLogger.log(this, "Client raycast: Closest hit at distance " + closestDistance);
+        } else {
+            SLogger.log(this, "Client raycast: No hits detected");
+        }
+
+        return Optional.ofNullable(closestHit);
+    }
+
+    /**
+     * Performs raycast against a single client grid.
+     */
+    private Optional<ClientGridRaycastResult> raycastSingleGrid(ClientLocalGrid grid, Vec3 rayStart, Vec3 rayEnd) {
+        try {
+            // Get grid's current world position and rotation
+            Vector3f gridPos = grid.getPosition();
+            Quat4f gridRot = grid.getRotation();
+
+            if (gridPos == null || gridRot == null) {
+                return Optional.empty();
+            }
+
+            // Convert to Vec3 for easier math
+            Vec3 gridWorldPos = new Vec3(gridPos.x, gridPos.y, gridPos.z);
+
+            // For now, do a simple bounding box test
+            // TODO: This can be enhanced with proper rotation and per-block testing
+
+            // Get grid's blocks to determine bounding box
+            Map<BlockPos, BlockState> blocks = grid.getGridSpaceBlocks();
+            if (blocks.isEmpty()) {
+                blocks = grid.getGridLocalBlocks(); // Fallback to legacy blocks
+            }
+
+            if (blocks.isEmpty()) {
+                return Optional.empty();
+            }
+
+            // Calculate grid bounding box
+            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+
+            for (BlockPos blockPos : blocks.keySet()) {
+                minX = Math.min(minX, blockPos.getX());
+                minY = Math.min(minY, blockPos.getY());
+                minZ = Math.min(minZ, blockPos.getZ());
+                maxX = Math.max(maxX, blockPos.getX());
+                maxY = Math.max(maxY, blockPos.getY());
+                maxZ = Math.max(maxZ, blockPos.getZ());
+            }
+
+            // Transform bounding box to world coordinates
+            // TODO: Apply proper rotation transformation
+            Vec3 worldMin = gridWorldPos.add(minX, minY, minZ);
+            Vec3 worldMax = gridWorldPos.add(maxX + 1, maxY + 1, maxZ + 1);
+
+            // Simple ray-AABB intersection test
+            Optional<Vec3> intersection = rayAABBIntersection(rayStart, rayEnd, worldMin, worldMax);
+
+            if (intersection.isPresent()) {
+                Vec3 hitPoint = intersection.get();
+
+                // Convert hit point back to grid-local coordinates
+                Vec3 localHitPoint = hitPoint.subtract(gridWorldPos);
+                BlockPos hitBlockPos = BlockPos.containing(
+                        Math.floor(localHitPoint.x),
+                        Math.floor(localHitPoint.y),
+                        Math.floor(localHitPoint.z)
+                );
+
+                // Check if there's actually a block at this position
+                BlockState hitBlock = blocks.get(hitBlockPos);
+                if (hitBlock != null && !hitBlock.isAir()) {
+                    return Optional.of(new ClientGridRaycastResult(
+                            grid,
+                            hitPoint,
+                            Vec3.ZERO, // TODO: Calculate proper normal
+                            hitBlockPos,
+                            hitBlock
+                    ));
+                }
+            }
+
+            return Optional.empty();
+
+        } catch (Exception e) {
+            SLogger.log(this, "Error in client grid raycast: " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Simple ray-AABB intersection test.
+     */
+    private Optional<Vec3> rayAABBIntersection(Vec3 rayStart, Vec3 rayEnd, Vec3 aabbMin, Vec3 aabbMax) {
+        Vec3 rayDir = rayEnd.subtract(rayStart);
+        double rayLength = rayDir.length();
+        rayDir = rayDir.normalize();
+
+        // Simple slab method for ray-AABB intersection
+        double tMin = 0.0;
+        double tMax = rayLength;
+
+        // Test X slab
+        if (Math.abs(rayDir.x) < 1e-8) {
+            if (rayStart.x < aabbMin.x || rayStart.x > aabbMax.x) return Optional.empty();
+        } else {
+            double t1 = (aabbMin.x - rayStart.x) / rayDir.x;
+            double t2 = (aabbMax.x - rayStart.x) / rayDir.x;
+            if (t1 > t2) { double temp = t1; t1 = t2; t2 = temp; }
+            tMin = Math.max(tMin, t1);
+            tMax = Math.min(tMax, t2);
+            if (tMin > tMax) return Optional.empty();
+        }
+
+        // Test Y slab
+        if (Math.abs(rayDir.y) < 1e-8) {
+            if (rayStart.y < aabbMin.y || rayStart.y > aabbMax.y) return Optional.empty();
+        } else {
+            double t1 = (aabbMin.y - rayStart.y) / rayDir.y;
+            double t2 = (aabbMax.y - rayStart.y) / rayDir.y;
+            if (t1 > t2) { double temp = t1; t1 = t2; t2 = temp; }
+            tMin = Math.max(tMin, t1);
+            tMax = Math.min(tMax, t2);
+            if (tMin > tMax) return Optional.empty();
+        }
+
+        // Test Z slab
+        if (Math.abs(rayDir.z) < 1e-8) {
+            if (rayStart.z < aabbMin.z || rayStart.z > aabbMax.z) return Optional.empty();
+        } else {
+            double t1 = (aabbMin.z - rayStart.z) / rayDir.z;
+            double t2 = (aabbMax.z - rayStart.z) / rayDir.z;
+            if (t1 > t2) { double temp = t1; t1 = t2; t2 = temp; }
+            tMin = Math.max(tMin, t1);
+            tMax = Math.min(tMax, t2);
+            if (tMin > tMax) return Optional.empty();
+        }
+
+        // Calculate hit point
+        Vec3 hitPoint = rayStart.add(rayDir.scale(tMin));
+        return Optional.of(hitPoint);
+    }
+
+    /**
+     * Result of a client-side grid raycast.
+     */
+    public static class ClientGridRaycastResult {
+        public final ClientLocalGrid hitGrid;
+        public final Vec3 hitPoint;
+        public final Vec3 hitNormal;
+        public final BlockPos hitBlockPos;
+        public final BlockState hitBlockState;
+
+        public ClientGridRaycastResult(ClientLocalGrid hitGrid, Vec3 hitPoint, Vec3 hitNormal,
+                                       BlockPos hitBlockPos, BlockState hitBlockState) {
+            this.hitGrid = hitGrid;
+            this.hitPoint = hitPoint;
+            this.hitNormal = hitNormal;
+            this.hitBlockPos = hitBlockPos;
+            this.hitBlockState = hitBlockState;
+        }
     }
 
     // ----------------------------------------------

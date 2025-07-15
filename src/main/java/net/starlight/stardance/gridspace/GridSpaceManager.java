@@ -2,12 +2,19 @@ package net.starlight.stardance.gridspace;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.Vec3;
+import net.starlight.stardance.Stardance;
+import net.starlight.stardance.core.LocalGrid;
+import net.starlight.stardance.physics.EngineManager;
+import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.utils.ILoggingControl;
 import net.starlight.stardance.utils.SLogger;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static net.starlight.stardance.Stardance.engineManager;
 
 /**
  * Manages allocation and deallocation of GridSpace regions.
@@ -39,7 +46,7 @@ public class GridSpaceManager implements ILoggingControl {
      * Y coordinate for GridSpace (well above normal world generation).
      * Using Y=200 to be above most world generation but below build limit.
      */
-    private static final int GRIDSPACE_Y = 200;
+    private static final int GRIDSPACE_Y = 128;
 
     /** Size of each GridSpace region in blocks */
     private static final int GRIDSPACE_REGION_SIZE = 1024;
@@ -74,6 +81,15 @@ public class GridSpaceManager implements ILoggingControl {
 
     /** Counter for generating unique region IDs */
     private final AtomicInteger nextRegionId = new AtomicInteger(0);
+
+    // ----------------------------------------------
+    // CACHING
+    // ----------------------------------------------
+
+    private static final Map<BlockPos, LocalGrid> GRID_POSITION_CACHE = new ConcurrentHashMap<>();
+    private static long lastGridCacheClean = 0;
+    private static final long GRID_CACHE_CLEAN_INTERVAL = 10000; // 10 seconds
+    private static final int MAX_GRID_CACHE_SIZE = 500;
 
     // ----------------------------------------------
     // LOGGING CONTROL
@@ -333,6 +349,200 @@ public class GridSpaceManager implements ILoggingControl {
         }
 
         return origin;
+    }
+
+    /**
+     * Gets the LocalGrid that contains the given GridSpace position.
+     * OPTIMIZED version with caching for better performance.
+     *
+     * This is the core method used by the distance replacement system to determine
+     * if a position is in GridSpace and which grid owns it.
+     *
+     * @param gridSpacePos Position in GridSpace coordinates
+     * @return LocalGrid containing this position, or null if not in GridSpace
+     */
+    public static LocalGrid getGridAtPosition(BlockPos gridSpacePos) {
+        try {
+            // Clean cache periodically
+            cleanGridCacheIfNeeded();
+
+            // Check cache first
+            LocalGrid cached = GRID_POSITION_CACHE.get(gridSpacePos);
+            if (cached != null) {
+                return cached;
+            }
+
+            // First check if this is even in GridSpace coordinate range
+            if (!isInGridSpaceStatic(gridSpacePos)) {
+                return null; // Definitely not in GridSpace
+            }
+
+            // Lookup the grid (expensive operation)
+            LocalGrid result = performGridLookup(gridSpacePos);
+
+            // Cache the result (even if null, to avoid repeated expensive lookups)
+            if (GRID_POSITION_CACHE.size() < MAX_GRID_CACHE_SIZE) {
+                GRID_POSITION_CACHE.put(new BlockPos(gridSpacePos), result);
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            SLogger.log("GridSpaceManager", "Error in getGridAtPosition: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Static version of isInGridSpace check.
+     * Used by the static getGridAtPosition method.
+     */
+    private static boolean isInGridSpaceStatic(BlockPos pos) {
+        return pos.getX() >= GRIDSPACE_ORIGIN_X &&
+                pos.getZ() >= GRIDSPACE_ORIGIN_Z &&
+                pos.getX() < GRIDSPACE_ORIGIN_X + (MAX_REGIONS_PER_ROW * GRIDSPACE_REGION_STRIDE) &&
+                pos.getZ() < GRIDSPACE_ORIGIN_Z + (MAX_REGIONS_PER_ROW * GRIDSPACE_REGION_STRIDE);
+    }
+
+    /**
+     * Performs the actual grid lookup across all dimensions.
+     */
+    private static LocalGrid performGridLookup(BlockPos gridSpacePos) {
+        try {
+            EngineManager engineManager = Stardance.engineManager;
+
+            for (ServerLevel serverLevel : engineManager.getAllActiveWorlds()) {
+                GridSpaceManager manager = engineManager.getGridSpaceManager(serverLevel);
+                if (manager != null) {
+                    LocalGrid grid = manager.getGridAtPositionInstance(gridSpacePos);
+                    if (grid != null) {
+                        return grid;
+                    }
+                }
+            }
+
+            return null;
+
+        } catch (Exception e) {
+            SLogger.log("GridSpaceManager", "Error in performGridLookup: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Finds the LocalGrid that is visually rendered at the given world position.
+     * This is different from getRegionContaining() which works with GridSpace coordinates.
+     *
+     * @param worldPos World position where a grid might be visually rendered
+     * @return LocalGrid that contains this world position, or null if none found
+     */
+    public static LocalGrid getGridAtWorldPosition(BlockPos worldPos) {
+        try {
+            // Get all engines and check their grids
+            for (PhysicsEngine engine : net.starlight.stardance.Stardance.engineManager.getAllEngines().values()) {
+                for (LocalGrid grid : engine.getGrids()) {
+                    if (grid.isDestroyed()) {
+                        continue;
+                    }
+
+                    // Check if this world position is within the grid's visual bounds
+                    if (isWorldPositionInGrid(worldPos, grid)) {
+                        return grid;
+                    }
+                }
+            }
+
+            return null;
+
+        } catch (Exception e) {
+            SLogger.log("GridSpaceManager", "Error finding grid at world position " + worldPos + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Checks if a world position is within a grid's visual rendering area.
+     */
+    private static boolean isWorldPositionInGrid(BlockPos worldPos, LocalGrid grid) {
+        try {
+            // Convert world position to grid-local coordinates
+            Vec3 worldVec = Vec3.atCenterOf(worldPos);
+            Vec3 gridLocalVec = grid.worldToGridSpace(worldVec);
+            BlockPos gridLocalPos = BlockPos.containing(gridLocalVec);
+
+            // Check if this grid-local position has a block
+            return grid.hasBlock(gridLocalPos);
+
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Instance method version of getGridAtPosition for this specific dimension.
+     */
+    public LocalGrid getGridAtPositionInstance(BlockPos gridSpacePos) {
+        try {
+            // Check if position is in GridSpace
+            if (!isInGridSpace(gridSpacePos)) {
+                return null;
+            }
+
+            // Find the region containing this position
+            GridSpaceRegion region = getRegionContaining(gridSpacePos);
+            if (region == null) {
+                return null; // Position in GridSpace but no allocated region
+            }
+
+            // Get the grid UUID for this region
+            UUID gridId = region.getGridId();
+            if (gridId == null) {
+                return null;
+            }
+
+            // Get the LocalGrid from the physics engine
+            PhysicsEngine physicsEngine = engineManager.getEngine(world);
+            if (physicsEngine == null) {
+                return null;
+            }
+
+            // Search through active grids to find the one with matching UUID
+            for (LocalGrid grid : physicsEngine.getActiveGrids()) {
+                if (gridId.equals(grid.getGridId())) {
+                    return grid;
+                }
+            }
+
+            // Grid region exists but LocalGrid not found in physics engine
+            // This might happen during grid creation/destruction - not necessarily an error
+            return null;
+
+        } catch (Exception e) {
+            SLogger.log(this, "Error in getGridAtPositionInstance: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Periodically cleans the grid position cache to prevent memory leaks.
+     */
+    private static void cleanGridCacheIfNeeded() {
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastGridCacheClean > GRID_CACHE_CLEAN_INTERVAL) {
+            if (GRID_POSITION_CACHE.size() > MAX_GRID_CACHE_SIZE) {
+                GRID_POSITION_CACHE.clear(); // Simple clear strategy
+            }
+            lastGridCacheClean = currentTime;
+        }
+    }
+
+    /**
+     * Clears the grid position cache manually.
+     * Useful for debugging or when grids are created/destroyed.
+     */
+    public static void clearGridPositionCache() {
+        GRID_POSITION_CACHE.clear();
+        SLogger.log("GridSpaceManager", "Grid position cache cleared manually");
     }
 
     // ----------------------------------------------

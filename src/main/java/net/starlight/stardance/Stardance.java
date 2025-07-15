@@ -57,7 +57,8 @@ public class Stardance implements ModInitializer {
 
 		// Register any custom items, commands, etc.
 		ModItems.registerItems();
-		CommandRegistry.init();
+//		CommandRegistry.init();
+		CommandRegistry.registerServerCommands();
 
 		// Capture the server instance on startup
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> serverInstance = server);

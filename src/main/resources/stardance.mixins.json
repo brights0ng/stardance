@@ -4,6 +4,8 @@
   "compatibilityLevel": "JAVA_17",
   "plugin": "net.starlight.stardance.mixin.StardanceMixinPlugin",
   "mixins": [
+    "feature.core_raycast.MixinEntity",
+    "feature.core_raycast.MixinLevel"
   ],
   "injectors": {
     "defaultRequire": 1
