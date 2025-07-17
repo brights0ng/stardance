@@ -4,10 +4,19 @@
   "compatibilityLevel": "JAVA_17",
   "plugin": "net.starlight.stardance.mixin.StardanceMixinPlugin",
   "mixins": [
+    "feature.block_state_access.MixinBlockGetter",
+    "feature.block_state_access.MixinLevel",
+    "feature.container_distance.MixinAbstractContainerMenu",
     "feature.core_raycast.MixinEntity",
-    "feature.core_raycast.MixinLevel"
+    "feature.core_raycast.MixinLevel",
+    "feature.distance_replace.MixinEntity",
+    "feature.server_interaction.MixinServerPlayerGameMode",
+    "server.network.MixinServerGamePacketListenerImpl"
   ],
   "injectors": {
     "defaultRequire": 1
-  }
+  },
+  "client": [
+    "client.MixinMinecraft"
+  ]
 }

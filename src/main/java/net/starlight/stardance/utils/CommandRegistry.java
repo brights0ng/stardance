@@ -19,9 +19,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.starlight.stardance.Stardance;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.debug.CollisionDebugger;
 import net.starlight.stardance.gridspace.GridSpaceManager;
@@ -29,6 +32,7 @@ import net.starlight.stardance.gridspace.GridSpaceRegion;
 import net.starlight.stardance.gridspace.utils.GridSpaceRaycastUtils;
 import net.starlight.stardance.physics.EngineManager;
 import net.starlight.stardance.physics.PhysicsEngine;
+import net.starlight.stardance.render.DebugRenderer;
 
 import javax.vecmath.Vector3d;
 import java.io.IOException;
@@ -147,12 +151,12 @@ public class CommandRegistry implements ILoggingControl {
                                     .executes(CommandRegistry::testLevelClip))
                             .then(literal("distance")
                                     .executes(CommandRegistry::executeDistanceDebug)
-                                    .then(literal("performance")
-                                            .executes(CommandRegistry::executeDistancePerformance))
-                                    .then(literal("gridspace")
-                                            .executes(CommandRegistry::executeGridSpaceDebug))
-                                    .then(literal("realtime")
-                                            .executes(CommandRegistry::executeRealtimeDistanceDebug))
+                                    .then(Commands.literal("visual-distance")
+                                            .executes(CommandRegistry::testDistanceMixinVisual))
+                                    .then(Commands.literal("visual-container")
+                                            .executes(CommandRegistry::testContainerDistanceVisual))
+                                    .then(Commands.literal("live-distance")
+                                            .executes(CommandRegistry::startLiveDistanceMonitoring))
                             )
                     )
             );
@@ -802,6 +806,340 @@ public class CommandRegistry implements ILoggingControl {
 
         // TODO: If you have client-side grid tracking, show that here
         // For now, just acknowledge the limitation
+
+        return 1;
+    }
+
+    /**
+     * Visual test for the distance replacement mixins using DebugRenderer
+     */
+    private static int testDistanceMixinVisual(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player == null || mc.level == null) {
+                source.sendSuccess(() -> Component.literal("§cNo player or world available"), false);
+                return 0;
+            }
+
+            source.sendSuccess(() -> Component.literal("§6=== Distance Mixin Visual Test ==="), false);
+            source.sendSuccess(() -> Component.literal("§eStarting visual distance test..."), false);
+
+            Player player = mc.player;
+            Vec3 playerPos = player.position();
+            Vec3 eyePos = player.getEyePosition();
+
+            // Clear existing debug elements
+            DebugRenderer.clear();
+
+            // Colors for different types of distance checks
+            final int COLOR_WORLD_DISTANCE = 0xFF00FF00;    // Green - vanilla world distance
+            final int COLOR_GRID_DISTANCE = 0xFFFF0000;     // Red - grid-aware distance
+            final int COLOR_PLAYER_POS = 0xFF0000FF;        // Blue - player position
+            final int COLOR_TEST_POINT = 0xFFFFFF00;        // Yellow - test points
+            final int COLOR_CONTAINER_RANGE = 0xFFFF00FF;   // Magenta - container interaction range
+
+            // Mark player position
+            DebugRenderer.addCrosshair(eyePos, COLOR_PLAYER_POS, 0.5f, 0.05f, 100);
+
+            // Test 1: Distance to various world positions
+            source.sendSuccess(() -> Component.literal("§a--- Test 1: World Position Distance ---"), false);
+
+            Vec3[] testPositions = {
+                    playerPos.add(3, 0, 0),   // 3 blocks east
+                    playerPos.add(0, 3, 0),   // 3 blocks up
+                    playerPos.add(0, 0, 3),   // 3 blocks south
+                    playerPos.add(5, 2, 5)    // Diagonal
+            };
+
+            for (int i = 0; i < testPositions.length; i++) {
+                Vec3 testPos = testPositions[i];
+
+                // Mark test position
+                DebugRenderer.addPoint(testPos, COLOR_TEST_POINT, 0.3f, 100);
+
+                // Calculate distance using our mixin (should call through the distance replacement)
+                double mixinDistance = player.distanceToSqr(testPos);
+
+                // Calculate vanilla distance for comparison
+                double vanillaDistance = playerPos.distanceToSqr(testPos);
+
+                // Draw line from player to test position
+                // Color depends on whether distances match (green) or differ (red)
+                int lineColor = Math.abs(mixinDistance - vanillaDistance) < 0.01 ? COLOR_WORLD_DISTANCE : COLOR_GRID_DISTANCE;
+                DebugRenderer.addLine(eyePos, testPos, lineColor, 0.03f, 100);
+
+                int finalI = i;
+                source.sendSuccess(() -> Component.literal(
+                        String.format("§fPoint %d: §e%.2f §7(vanilla: §e%.2f§7) §f%s",
+                                finalI + 1,
+                                Math.sqrt(mixinDistance),
+                                Math.sqrt(vanillaDistance),
+                                Math.abs(mixinDistance - vanillaDistance) < 0.01 ? "✓" : "⚠ DIFFERENT")
+                ), false);
+            }
+
+            // Test 2: Find grids and test grid positions
+            source.sendSuccess(() -> Component.literal("§a--- Test 2: Grid Position Distance ---"), false);
+
+            EngineManager engineManager = Stardance.engineManager;
+            PhysicsEngine physicsEngine = engineManager.getEngine(mc.level);
+
+            if (physicsEngine != null) {
+                int gridCount = 0;
+                for (LocalGrid grid : physicsEngine.getGrids()) {
+                    if (gridCount >= 3) break; // Limit to 3 grids for clarity
+
+                    // Get a sample position from the grid
+                    Vec3 gridPos = grid.getWorldPosition();
+                    Vec3 sampleGridSpacePos = gridPos.add(2, 1, 2);
+
+                    // Mark grid position
+                    DebugRenderer.addBox(
+                            new AABB(gridPos.add(-0.5, -0.5, -0.5), gridPos.add(0.5, 0.5, 0.5)),
+                            COLOR_GRID_DISTANCE, 0.02f, 100
+                    );
+
+                    // Test distance to grid position
+                    double gridDistance = player.distanceToSqr(sampleGridSpacePos.x, sampleGridSpacePos.y, sampleGridSpacePos.z);
+
+                    // Convert to world position and calculate vanilla distance
+                    Vec3 worldPos = grid.gridSpaceToWorldSpace(sampleGridSpacePos);
+                    double worldDistance = playerPos.distanceToSqr(worldPos);
+
+                    // Draw line from player to visual world position
+                    DebugRenderer.addLine(eyePos, worldPos, COLOR_GRID_DISTANCE, 0.05f, 100);
+
+                    // Add point at the grid space position being tested
+                    DebugRenderer.addPoint(sampleGridSpacePos, COLOR_TEST_POINT, 0.2f, 100);
+
+                    int finalGridCount = gridCount;
+                    source.sendSuccess(() -> Component.literal(
+                            String.format("§fGrid %d: §c%.2f §7(world: §e%.2f§7)",
+                                    finalGridCount + 1,
+                                    Math.sqrt(gridDistance),
+                                    Math.sqrt(worldDistance))
+                    ), false);
+
+                    gridCount++;
+                }
+
+                if (gridCount == 0) {
+                    source.sendSuccess(() -> Component.literal("§7No grids found for testing"), false);
+                }
+            } else {
+                source.sendSuccess(() -> Component.literal("§7No physics engine available"), false);
+            }
+
+            // Test 3: Container interaction range visualization
+            source.sendSuccess(() -> Component.literal("§a--- Test 3: Container Range Visualization ---"), false);
+
+            // Show the standard container interaction range (8 blocks)
+            double containerRange = 8.0;
+            int rangeSamples = 16;
+
+            for (int i = 0; i < rangeSamples; i++) {
+                double angle = (2 * Math.PI * i) / rangeSamples;
+                Vec3 rangePoint = eyePos.add(
+                        Math.cos(angle) * containerRange,
+                        0,
+                        Math.sin(angle) * containerRange
+                );
+
+                DebugRenderer.addPoint(rangePoint, COLOR_CONTAINER_RANGE, 0.1f, 100);
+
+                if (i % 4 == 0) { // Draw lines for cardinal directions
+                    DebugRenderer.addLine(eyePos, rangePoint, COLOR_CONTAINER_RANGE, 0.02f, 100);
+                }
+            }
+
+            source.sendSuccess(() -> Component.literal("§fContainer range: §d8.0 blocks §7(magenta circle)"), false);
+            source.sendSuccess(() -> Component.literal("§eVisual test active for 5 seconds!"), false);
+            source.sendSuccess(() -> Component.literal("§7Green = world distance, Red = grid distance"), false);
+
+            return 1;
+
+        } catch (Exception e) {
+            source.sendSuccess(() -> Component.literal("§cTest failed: " + e.getMessage()), false);
+            e.printStackTrace();
+            return 0;
+        }
+    }
+
+    /**
+     * Real-time container distance monitoring using DebugRenderer
+     */
+    private static int testContainerDistanceVisual(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player == null || mc.level == null) {
+                source.sendSuccess(() -> Component.literal("§cNo player or world available"), false);
+                return 0;
+            }
+
+            source.sendSuccess(() -> Component.literal("§6=== Container Distance Visual Test ==="), false);
+
+            Player player = mc.player;
+            Vec3 eyePos = player.getEyePosition();
+
+            // Clear existing debug elements
+            DebugRenderer.clear();
+
+            // Colors
+            final int COLOR_ACCESSIBLE = 0xFF00FF00;      // Green - within range
+            final int COLOR_TOO_FAR = 0xFFFF0000;         // Red - too far
+            final int COLOR_CONTAINER = 0xFF0000FF;       // Blue - container position
+            final int COLOR_RANGE_INDICATOR = 0xFFFFFF00; // Yellow - range boundary
+
+            // Find nearby containers (simplified - looking for obvious container blocks)
+            Vec3 playerPos = player.position();
+            int containerCount = 0;
+
+            // Check positions around the player for potential containers
+            for (int x = -10; x <= 10; x++) {
+                for (int y = -5; y <= 5; y++) {
+                    for (int z = -10; z <= 10; z++) {
+                        BlockPos checkPos = BlockPos.containing(playerPos.add(x, y, z));
+                        BlockState state = mc.level.getBlockState(checkPos);
+
+                        // Check if this looks like a container (basic check)
+                        String blockName = state.getBlock().getDescriptionId().toLowerCase();
+                        if (blockName.contains("chest") || blockName.contains("barrel") ||
+                                blockName.contains("crafting") || blockName.contains("furnace")) {
+
+                            Vec3 containerPos = Vec3.atCenterOf(checkPos);
+
+                            // Test distance using player.distanceToSqr (our mixin should intercept this)
+                            double distance = player.distanceToSqr(containerPos.x, containerPos.y, containerPos.z);
+                            boolean withinRange = distance <= 64.0; // 8^2 = 64
+
+                            // Mark container
+                            DebugRenderer.addBox(
+                                    new AABB(checkPos),
+                                    withinRange ? COLOR_ACCESSIBLE : COLOR_TOO_FAR,
+                                    0.03f, 60
+                            );
+
+                            // Draw line from player to container
+                            DebugRenderer.addLine(
+                                    eyePos, containerPos,
+                                    withinRange ? COLOR_ACCESSIBLE : COLOR_TOO_FAR,
+                                    0.02f, 60
+                            );
+
+                            // Add distance indicator
+                            String distanceText = String.format("%.1f", Math.sqrt(distance));
+                            source.sendSuccess(() -> Component.literal(
+                                    String.format("§fContainer at %s: §%c%.1f blocks §7%s",
+                                            checkPos.toShortString(),
+                                            withinRange ? 'a' : 'c',
+                                            Math.sqrt(distance),
+                                            withinRange ? "✓" : "✗")
+                            ), false);
+
+                            containerCount++;
+                            if (containerCount >= 5) break; // Limit output
+                        }
+                    }
+                    if (containerCount >= 5) break;
+                }
+                if (containerCount >= 5) break;
+            }
+
+            if (containerCount == 0) {
+                source.sendSuccess(() -> Component.literal("§7No containers found nearby"), false);
+
+                // Create a test container position anyway
+                Vec3 testContainerPos = playerPos.add(6, 0, 0);
+                double distance = player.distanceToSqr(testContainerPos.x, testContainerPos.y, testContainerPos.z);
+                boolean withinRange = distance <= 64.0;
+
+                DebugRenderer.addBox(
+                        new AABB(testContainerPos.add(-0.5, -0.5, -0.5), testContainerPos.add(0.5, 0.5, 0.5)),
+                        withinRange ? COLOR_ACCESSIBLE : COLOR_TOO_FAR,
+                        0.03f, 60
+                );
+
+                DebugRenderer.addLine(eyePos, testContainerPos, withinRange ? COLOR_ACCESSIBLE : COLOR_TOO_FAR, 0.02f, 60);
+
+                source.sendSuccess(() -> Component.literal(
+                        String.format("§fTest container: §%c%.1f blocks §7%s",
+                                withinRange ? 'a' : 'c',
+                                Math.sqrt(distance),
+                                withinRange ? "✓" : "✗")
+                ), false);
+            }
+
+            // Show interaction range as a sphere
+            int rangeSamples = 20;
+            double containerRange = 8.0;
+
+            for (int i = 0; i < rangeSamples; i++) {
+                for (int j = 0; j < rangeSamples; j++) {
+                    double theta = (2 * Math.PI * i) / rangeSamples;
+                    double phi = (Math.PI * j) / rangeSamples;
+
+                    Vec3 spherePoint = eyePos.add(
+                            containerRange * Math.sin(phi) * Math.cos(theta),
+                            containerRange * Math.cos(phi),
+                            containerRange * Math.sin(phi) * Math.sin(theta)
+                    );
+
+                    if (i % 5 == 0 && j % 5 == 0) { // Sparse sampling for visibility
+                        DebugRenderer.addPoint(spherePoint, COLOR_RANGE_INDICATOR, 0.05f, 60);
+                    }
+                }
+            }
+
+            source.sendSuccess(() -> Component.literal("§eContainer distance test active for 3 seconds!"), false);
+            source.sendSuccess(() -> Component.literal("§aGreen = accessible, §cRed = too far, §eYellow = range boundary"), false);
+
+            return 1;
+
+        } catch (Exception e) {
+            source.sendSuccess(() -> Component.literal("§cTest failed: " + e.getMessage()), false);
+            e.printStackTrace();
+            return 0;
+        }
+    }
+
+    /**
+     * Live distance monitoring that updates in real-time
+     */
+    private static int startLiveDistanceMonitoring(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+
+        source.sendSuccess(() -> Component.literal("§6=== Live Distance Monitoring ==="), false);
+        source.sendSuccess(() -> Component.literal("§eStarting live monitoring... Look around to see distance rays!"), false);
+        source.sendSuccess(() -> Component.literal("§7Use '/stardance debug stop-live' to stop"), false);
+
+        // This would need a background task system, but for now we'll show current state
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null && mc.hitResult != null) {
+            Vec3 eyePos = mc.player.getEyePosition();
+
+            if (mc.hitResult.getType() == HitResult.Type.BLOCK) {
+                BlockHitResult blockHit = (BlockHitResult) mc.hitResult;
+                Vec3 hitPos = blockHit.getLocation();
+
+                // Test our distance mixin
+                double mixinDistance = mc.player.distanceToSqr(hitPos);
+
+                // Clear and add current ray
+                DebugRenderer.clear();
+                DebugRenderer.addLine(eyePos, hitPos, 0xFF00FFFF, 0.04f, 20); // Cyan ray
+                DebugRenderer.addPoint(hitPos, 0xFFFFFF00, 0.2f, 20); // Yellow target
+
+                source.sendSuccess(() -> Component.literal(
+                        String.format("§fTarget: %s §eDistance: %.2f",
+                                blockHit.getBlockPos().toShortString(),
+                                Math.sqrt(mixinDistance))
+                ), false);
+            }
+        }
 
         return 1;
     }

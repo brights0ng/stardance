@@ -524,6 +524,59 @@ public class GridSpaceManager implements ILoggingControl {
     }
 
     /**
+     * Gets all grids near a world position within the specified radius.
+     * This is Stardance's equivalent of VS2's transformToNearbyShipsAndWorld functionality.
+     *
+     * @param worldPos World position to search around
+     * @param radius Search radius in blocks
+     * @return List of LocalGrids within the radius
+     */
+    public static List<LocalGrid> getGridsNear(Vec3 worldPos, double radius) {
+        List<LocalGrid> nearbyGrids = new ArrayList<>();
+
+        try {
+            EngineManager engineManager = net.starlight.stardance.Stardance.engineManager;
+
+            // Check all active worlds/dimensions
+            for (ServerLevel serverLevel : engineManager.getAllActiveWorlds()) {
+                PhysicsEngine physicsEngine = engineManager.getEngine(serverLevel);
+
+                if (physicsEngine != null) {
+                    // Check all active grids in this world
+                    for (LocalGrid grid : physicsEngine.getActiveGrids()) {
+                        if (grid.isDestroyed()) {
+                            continue;
+                        }
+
+                        // Get grid's world position (where it's visually rendered)
+                        Vec3 gridWorldPos = grid.getWorldPosition();
+
+                        // Calculate distance between world position and grid position
+                        double distance = worldPos.distanceTo(gridWorldPos);
+
+                        // Include grid if within radius
+                        if (distance <= radius) {
+                            nearbyGrids.add(grid);
+                        }
+                    }
+                }
+            }
+
+            SLogger.log("GridSpaceManager",
+                    String.format("Found %d grids near world position %s within radius %.1f",
+                            nearbyGrids.size(),
+                            String.format("(%.1f,%.1f,%.1f)", worldPos.x, worldPos.y, worldPos.z),
+                            radius));
+
+        } catch (Exception e) {
+            SLogger.log("GridSpaceManager", "Error in getGridsNear: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        return nearbyGrids;
+    }
+
+    /**
      * Periodically cleans the grid position cache to prevent memory leaks.
      */
     private static void cleanGridCacheIfNeeded() {

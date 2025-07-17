@@ -8,12 +8,15 @@ import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.starlight.stardance.core.LocalGrid;
 import net.starlight.stardance.physics.PhysicsEngine;
 import net.starlight.stardance.physics.EngineManager;
@@ -30,21 +33,22 @@ public class GridSpaceRaycastUtils {
 
     /**
      * Performs raycasting that includes both world blocks and GridSpace blocks.
+     * Follows VS2's exact pattern to prevent recursion.
      */
     public static BlockHitResult clipIncludeGrids(Level level, ClipContext context) {
         try {
-            // 1. Perform vanilla world raycast
-            BlockHitResult worldHit = level.clip(context);
+            // 1. Perform vanilla world raycast using VS2's approach (no recursion)
+            BlockHitResult vanillaHit = vanillaClip(level, context);
 
             // 2. Perform GridSpace raycast using JBullet physics
-            BlockHitResult gridHit = performGridSpaceRaycast(level, context);
+            BlockHitResult gridHit = performGridSpaceRaycastOnly(level, context);
 
             // 3. Debug logging
-            SLogger.log("GridSpaceRaycastUtils", "World hit: " + worldHit.getType() +
+            SLogger.log("GridSpaceRaycastUtils", "Vanilla hit: " + vanillaHit.getType() +
                     ", Grid hit: " + gridHit.getType());
 
             // 4. Return whichever hit is closer to ray origin
-            BlockHitResult result = selectCloserHit(worldHit, gridHit, context.getFrom());
+            BlockHitResult result = selectCloserHit(vanillaHit, gridHit, context.getFrom());
 
             SLogger.log("GridSpaceRaycastUtils", "Selected result: " + result.getType());
             return result;
@@ -52,9 +56,53 @@ public class GridSpaceRaycastUtils {
         } catch (Exception e) {
             SLogger.log("GridSpaceRaycastUtils", "Error in clipIncludeGrids: " + e.getMessage());
             e.printStackTrace();
-            // Graceful degradation - return vanilla result if grid raycast fails
-            return level.clip(context);
+            // Graceful degradation - return vanilla result using safe method
+            return vanillaClip(level, context);
         }
+    }
+
+    /**
+     * VS2's exact approach: vanilla raycast using BlockGetter.traverseBlocks()
+     * This prevents recursion by bypassing MixinLevel.clip()
+     */
+    private static BlockHitResult vanillaClip(Level level, ClipContext context) {
+        return BlockGetter.traverseBlocks(
+                context.getFrom(),
+                context.getTo(),
+                context,
+                (clipContext, blockPos) -> {
+                    if (blockPos == null) return null;
+
+                    BlockState blockState = level.getBlockState(blockPos);
+                    FluidState fluidState = level.getFluidState(blockPos);
+                    Vec3 vec3 = clipContext.getFrom();
+                    Vec3 vec32 = clipContext.getTo();
+
+                    VoxelShape voxelShape = clipContext.getBlockShape(blockState, level, blockPos);
+                    BlockHitResult blockHitResult = level.clipWithInteractionOverride(vec3, vec32, blockPos, voxelShape, blockState);
+
+                    VoxelShape voxelShape2 = clipContext.getFluidShape(fluidState, level, blockPos);
+                    BlockHitResult blockHitResult2 = voxelShape2.clip(vec3, vec32, blockPos);
+
+                    double d = blockHitResult == null ?
+                            Double.MAX_VALUE :
+                            clipContext.getFrom().distanceToSqr(blockHitResult.getLocation());
+
+                    double e = blockHitResult2 == null ?
+                            Double.MAX_VALUE :
+                            clipContext.getFrom().distanceToSqr(blockHitResult2.getLocation());
+
+                    return d <= e ? blockHitResult : blockHitResult2;
+                },
+                (ctx) -> {
+                    Vec3 vec3 = ctx.getFrom().subtract(ctx.getTo());
+                    return BlockHitResult.miss(
+                            ctx.getTo(),
+                            Direction.getNearest(vec3.x, vec3.y, vec3.z),
+                            BlockPos.containing(ctx.getTo())
+                    );
+                }
+        );
     }
 
     /**
@@ -305,7 +353,7 @@ public class GridSpaceRaycastUtils {
     /**
      * Determines the closest hit between world and grid raycasts.
      */
-    private static BlockHitResult selectCloserHit(BlockHitResult worldHit, BlockHitResult gridHit, Vec3 rayOrigin) {
+    public static BlockHitResult selectCloserHit(BlockHitResult worldHit, BlockHitResult gridHit, Vec3 rayOrigin) {
         // If only one hit, return it
         if (worldHit.getType() == HitResult.Type.MISS) return gridHit;
         if (gridHit.getType() == HitResult.Type.MISS) return worldHit;
